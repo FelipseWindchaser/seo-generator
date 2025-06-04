@@ -1,0 +1,32 @@
+{
+  "name": "seo-generator",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "lint": "eslint .",
+    "typecheck": "nuxt typecheck"
+  },
+  "devDependencies": {
+    "@nuxt/devtools": "latest",
+    "@nuxtjs/tailwindcss": "^6.8.0",
+    "@types/bull": "^3.15.9",
+    "@types/node": "^20",
+    "nuxt": "^3.8.0",
+    "typescript": "^5.3.0",
+    "vue-tsc": "^1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.16.0",
+    "@pinia/nuxt": "^0.5.1",
+    "@vueuse/nuxt": "^10.7.0",
+    "bull": "^4.16.5",
+    "ioredis": "^5.3.2",
+    "vitest": "^3.1.4",
+    "zod": "^3.22.4"
+  }
+}
