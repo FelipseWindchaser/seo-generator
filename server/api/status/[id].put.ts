@@ -1,4 +1,4 @@
-import { getTask,  } from "~/server/utils/redis";
+import { updateTask,  } from "~/server/utils/redis";
 
 export default defineEventHandler(async (event) => {
   const taskId = getRouterParam(event, "id");
@@ -10,19 +10,19 @@ export default defineEventHandler(async (event) => {
     });
   }
 
-  const task = await getTask(taskId);
+  const task = await updateTask(taskId, { status: "processing" });
 
   if (!task) {
     return {
       status: "not_found",
-      message: "Задача не найдена",
+      message: "Задача не найдена, невозможно обновить статус",
     };
   }
   //if (task.status === "completed" && task.result) {
   if (task.status === "completed") {
     return {
       status: "completed",
-      message: "Задача выполнена",
+      message: "Статус обновлен: задача выполнена",
       result: task.result,
       generatedAt: task.completedAt,
       task: task,
@@ -32,13 +32,13 @@ export default defineEventHandler(async (event) => {
   if (task.status === "error") {
     return {
       status: "error",
-      error: task.error || "Unknown error",
+      error: task.error || "Неизвестная ошибка, невозможно обновить статус",
     };
   }
 
   return {
     status: "processing",
-    message: "Ещё генерируется...",
+    message: "Статус обновлен: задача в процессе",
     task: task,
   };
 });

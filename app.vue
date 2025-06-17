@@ -1,9 +1,5 @@
 <template>
   <div>
-    <Home />
+    <NuxtPage />
   </div>
 </template>
-
-<script setup lang="ts">
-import Home from "./pages/index.vue";
-</script>

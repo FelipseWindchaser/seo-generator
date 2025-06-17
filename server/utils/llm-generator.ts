@@ -10,7 +10,44 @@ import { ContentValidator } from "./content-validator";
 export class SEOGenerator {
   private anthropic: Anthropic;
   private validator: ContentValidator;
-
+  private async enhancePromptWithMorphology(data: GenerationRequest): Promise<string> {
+    // Анализируем ключевые слова для понимания их морфологии
+    const keywordAnalyses = await Promise.all(
+      data.keywords.map(async (keyword) => {
+        const words = keyword.split(' ')
+        const analyses = await Promise.all(
+          words.map(word => morphologyService.analyzeWord(word))
+        )
+        
+        return {
+          keyword,
+          analyses: analyses.filter(a => a !== null),
+          hasBrand: analyses.some(a => a && a.pos === 'неизвестно'), // Бренды не распознаются
+          isPhrase: words.length > 1
+        }
+      })
+    )
+    
+    // Формируем дополнительные инструкции
+    const morphInstructions: string[] = []
+    
+    const brands = keywordAnalyses.filter(ka => ka.hasBrand).map(ka => ka.keyword)
+    if (brands.length > 0) {
+      morphInstructions.push(
+        `Бренды и названия (используй точно): ${brands.join(', ')}`
+      )
+    }
+    
+    const phrases = keywordAnalyses.filter(ka => ka.isPhrase).map(ka => ka.keyword)
+    if (phrases.length > 0) {
+      morphInstructions.push(
+        `Многословные фразы (можно склонять каждое слово): ${phrases.join(', ')}`
+      )
+    }
+    
+    return morphInstructions.join('\n')
+  }
+  
   constructor() {
     const config = useRuntimeConfig();
     this.anthropic = new Anthropic({

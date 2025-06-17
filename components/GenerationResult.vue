@@ -23,7 +23,7 @@
     </div>
 
     <!-- Результат -->
-    <div v-else-if="status === 'completed' && result" class="space-y-6">
+    <div v-else-if="status === 'completed'" class="space-y-6">
       <div class="bg-green-50 border border-green-200 rounded-lg p-4">
         <h2 class="text-xl font-semibold text-green-800 mb-2">
           ✅ Описание готово!
@@ -36,31 +36,31 @@
         <div class="space-y-2">
           <div class="flex justify-between">
             <span class="text-gray-600">Символов:</span>
-            <span class="font-medium">{{ result.metrics.charCount }}</span>
+            <!-- <span class="font-medium">{{ result.metrics.charCount }}</span> -->
           </div>
           <div class="flex justify-between">
             <span class="text-gray-600">Использовано ключей:</span>
-            <span class="font-medium">
+            <!-- <span class="font-medium">
               {{ result.metrics.keywordsUsed }} из
               {{ result.metrics.totalKeywords }}
-            </span>
+            </span> -->
           </div>
           <div class="flex justify-between">
             <span class="text-gray-600">Плотность ключей:</span>
-            <span class="font-medium"
+            <!-- <span class="font-medium"
               >{{ result.metrics.keywordDensity }}%</span
-            >
+            > -->
           </div>
           <div class="flex justify-between">
             <span class="text-gray-600">Попыток генерации:</span>
-            <span class="font-medium">{{ result.attempts }}</span>
+            <!-- <span class="font-medium">{{ result.attempts }}</span> -->
           </div>
         </div>
       </div>
 
       <!-- Контент -->
       <div class="bg-white border border-gray-200 rounded-lg p-6">
-        <div class="prose max-w-none" v-html="formattedContent" />
+        <!-- <div class="prose max-w-none" v-html="formattedContent" /> -->
       </div>
 
       <!-- Кнопки действий -->
@@ -80,7 +80,7 @@
       </div>
 
       <!-- Предупреждения -->
-      <div
+      <!-- <div
         v-if="result.warnings && result.warnings.length > 0"
         class="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
       >
@@ -90,7 +90,7 @@
             {{ warning }}
           </li>
         </ul>
-      </div>
+      </div> -->
     </div>
   </div>
 </template>
@@ -108,7 +108,7 @@ const emit = defineEmits<{
 
 // Состояние
 const status = ref<"processing" | "completed" | "error">("processing");
-const result = ref<GenerationResult | null>(null);
+// const result = ref<GenerationResult | null>(null);
 const error = ref<string>("");
 const copied = ref(false);
 
@@ -116,13 +116,14 @@ const copied = ref(false);
 const checkStatus = async () => {
   try {
     const response = await $fetch(`/api/status/${props.taskId}`);
+    console.log(response);
 
     if (response.status === "completed") {
       status.value = "completed";
-      result.value = response.result;
+      // result.value = response.result;
     } else if (response.status === "error") {
       status.value = "error";
-      error.value = response.error || "Неизвестная ошибка";
+      // error.value = response.error || "Неизвестная ошибка";
     } else if (response.status === "not_found") {
       status.value = "error";
       error.value = "Задача не найдена";
@@ -135,20 +136,20 @@ const checkStatus = async () => {
 };
 
 // Форматирование контента (преобразование ** в <strong>)
-const formattedContent = computed(() => {
-  if (!result.value) return "";
+// const formattedContent = computed(() => {
+//   if (!result.value) return "";
 
-  return result.value.content
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\n/g, "<br>");
-});
+//   return result.value.content
+//     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+//     .replace(/\n/g, "<br>");
+// });
 
 // Копирование в буфер обмена
 const copyToClipboard = async () => {
-  if (!result.value) return;
+  // if (!result.value) return;
 
   try {
-    await navigator.clipboard.writeText(result.value.content);
+    // await navigator.clipboard.writeText(result.value.content);
     copied.value = true;
     setTimeout(() => {
       copied.value = false;

@@ -17,9 +17,10 @@
 
 <script setup lang="ts">
 import type { GenerationRequest } from "~/types";
-
+import { useRouter } from "vue-router"; // Добавлен импорт useRouter
 const loading = ref(false);
 const taskId = ref<string | null>(null);
+const router = useRouter(); // Инициализация роутера
 
 const handleSubmit = async (data: GenerationRequest) => {
   // loading.value = true;
@@ -31,6 +32,8 @@ const handleSubmit = async (data: GenerationRequest) => {
     });
 
     taskId.value = response.taskId;
+    // ПЕРЕНАПРАВЛЕНИЕ НА НОВУЮ СТРАНИЦУ
+    router.push(`/tasks/${taskId.value}`); // Используем router.push
   } catch (error) {
     console.error("Error submitting form:", error);
     // Обработка ошибок

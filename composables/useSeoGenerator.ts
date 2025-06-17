@@ -16,8 +16,8 @@ export const useSeoGenerator = () => {
         method: "POST",
         body: data,
       });
-
       return taskId;
+      
     } catch (err) {
       error.value = err instanceof Error ? err.message : "Ошибка генерации";
       return null;
@@ -36,4 +36,46 @@ export const useSeoGenerator = () => {
       return null;
     }
   };
+
+  const updateTaskStatus = async (taskId: string, status: string): Promise<Task | null> => {
+    try {
+      const response = await $fetch<Task>(`/api/status/${taskId}`, {
+        method: "PUT" as const,
+        body: { status },
+      });
+      return response as Task;
+    } catch (err) {
+      error.value =
+        err instanceof Error ? err.message : "Ошибка получения статуса";
+      return null;
+    }
+  };
+  // const getTasksWithStatus = async (status: string): Promise<Task | null> => {
+  //   try {
+  //     const response = await $fetch(`/api/status/${status}`);
+  //     return (response as any).task as Task;
+  //   } catch (err) {
+  //     error.value =
+  //       err instanceof Error ? err.message : "Ошибка получения задач со статусом";
+  //     return null;
+  //   }
+  // };
+
+
+
+  return {
+    generateSeo,
+    getTaskStatus,
+    updateTaskStatus,
+    // getTasksWithStatus,
+    loading,
+    error
+  };
 };
+
+// const { getTaskStatus } = useSeoGenerator();
+// const taskStatus = async () => {
+//   const result = await getTaskStatus('task_1749109569620_13h7kyapm');
+//   console.log('task status', result);
+// }
+// taskStatus();

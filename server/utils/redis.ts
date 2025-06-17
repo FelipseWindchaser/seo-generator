@@ -28,7 +28,7 @@ export async function createTask(request: GenerationRequest): Promise<string> {
     `task:${taskId}`,
     JSON.stringify(task),
     "EX",
-    3600 // TTL 1 час
+    36000 // TTL 1 час
   );
 
   return taskId;
@@ -49,10 +49,47 @@ export async function getTask(taskId: string): Promise<Task | null> {
   return JSON.parse(data) as Task;
 }
 
+
+// find all processing tasks
+export async function getProcessingTasks(): Promise<Task[]> {
+  const redis = getRedis();
+  
+  try {
+    // 1. Get all task keys
+    const keys = await redis.keys('task:*');
+    // console.log('keys', keys);
+    // 2. If no tasks exist, return empty array
+    if (!keys.length) return [];
+    
+    // 3. Get all tasks in parallel
+    const tasks = await Promise.all(
+      keys.map(async (key) => {
+        const data = await redis.get(key);
+        return data ? (JSON.parse(data) as Task) : null;
+      })
+    );
+    
+    // 4. Filter for processing tasks
+    return tasks.filter((task): task is Task => 
+      task !== null && task.status === 'processing'
+    );
+    
+  } catch (error) {
+    console.error('Error getting processing tasks:', error);
+    throw new Error('Failed to retrieve processing tasks');
+  }
+}
+// get task object by id
+const getalltasks = async () => {
+  const result = await getProcessingTasks();
+  // console.log('getalltasks', result);
+}
+getalltasks();
+
 export async function updateTask(
   taskId: string,
   updates: Partial<Task>
-): Promise<void> {
+): Promise<Task> {
   const redis = getRedis();
   const task = await getTask(taskId);
 
@@ -60,5 +97,16 @@ export async function updateTask(
 
   const updatedTask = { ...task, ...updates };
 
-  await redis.setex(`task:${taskId}`, 3600, JSON.stringify(updatedTask));
+  await redis.setex(`task:${taskId}`, 36000, JSON.stringify(updatedTask));
+  return updatedTask;
 }
+// update task status by id for testing
+// const update = async () => {
+//   const result = await updateTask('task_1749125738893_3v8dc4qo9', { status: 'completed' });
+//   // console.log('update', result);
+// }
+// update();
+
+import { repeatFunction } from '~/composables/processGeneration';
+repeatFunction();
+
