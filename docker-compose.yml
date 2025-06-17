@@ -13,6 +13,25 @@ services:
   #   depends_on:
   #     - redis
   #   restart: unless-stopped
+ app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # ... env vars
+    depends_on:
+      - redis
+    restart: unless-stopped
+    command: npm run start # Запускает API сервер
+    
+worker: # <-- НОВЫЙ СЕРВИС
+    build: .
+    environment:
+      # ... те же env vars
+    depends_on:
+      - redis
+    restart: unless-stopped
+    command: npm run worker # Запускает воркер
 
   redis:
     image: redis:7-alpine

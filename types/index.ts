@@ -77,7 +77,7 @@ export interface KeywordDetail {
 
 export interface Task {
   id: string;
-  status: "processing" | "completed" | "error";
+  status: "processing" | "completed" | "error" | "queued";
   request?: GenerationRequest;
   result?: GenerationResult;
   error?: string;

@@ -1,7 +1,6 @@
-import Az from 'az'
-import { LRUCache } from 'lru-cache'
-import PQueue from 'p-queue'
-import type { Token, MorphResult } from 'az'
+import Az from 'az';
+import { LRUCache } from 'lru-cache';
+import type { Token } from 'az';
 
 export interface MorphologyAnalysis {
   lemma: string
@@ -18,290 +17,165 @@ export interface TextAnalysis {
 }
 
 export class MorphologyService {
-  private static instance: MorphologyService
-  private initialized = false
-  private initPromise: Promise<void> | null = null
-  
-  // Кеш для оптимизации
-  private lemmaCache: LRUCache<string, MorphologyAnalysis>
-  private analysisCache: LRUCache<string, TextAnalysis>
-  
-  // Очередь для батчинга операций
-  private queue: PQueue
-  
+  private static instance: MorphologyService;
+  private initialized = false;
+  private initPromise: Promise<void> | null = null; // Для обработки одновременных вызовов
+  private lemmaCache: LRUCache<string, MorphologyAnalysis>;
+  private textAnalysisCache: LRUCache<string, TextAnalysis>;
+
   private constructor() {
-    // LRU кеш для лемм (10000 записей)
-    this.lemmaCache = new LRUCache<string, MorphologyAnalysis>({
-      max: 10000,
-      ttl: 1000 * 60 * 60 * 24 // 24 часа
-    })
-    
-    // Кеш для анализа текстов (1000 записей)
-    this.analysisCache = new LRUCache<string, TextAnalysis>({
-      max: 1000,
-      ttl: 1000 * 60 * 60 // 1 час
-    })
-    
-    // Очередь для контроля нагрузки
-    this.queue = new PQueue({ 
-      concurrency: 10,
-      interval: 100,
-      intervalCap: 50
-    })
+    this.lemmaCache = new LRUCache({ max: 10000 });
+    this.textAnalysisCache = new LRUCache({ max: 100 });
   }
-  
-  static getInstance(): MorphologyService {
+
+  public static getInstance(): MorphologyService {
     if (!MorphologyService.instance) {
-      MorphologyService.instance = new MorphologyService()
+      MorphologyService.instance = new MorphologyService();
     }
-    return MorphologyService.instance
+    return MorphologyService.instance;
   }
-  
-  async initialize(): Promise<void> {
-    if (this.initialized) return
-    
-    if (!this.initPromise) {
-      this.initPromise = this._initialize()
+
+  public async initialize(): Promise<void> {
+    if (this.initialized) {
+      return Promise.resolve(); // Уже инициализирован
     }
-    
-    return this.initPromise
+    // Az.js инициализируется при первом вызове, но мы "прогреем" его
+    if (this.initPromise) {
+      return this.initPromise; // Инициализация уже в процессе, возвращаем существующий промис
+    }
   }
-  
   private async _initialize(): Promise<void> {
     try {
-      // Az.js автоматически инициализируется при первом использовании
-      // Делаем тестовый вызов для прогрева
-      this.initialized = true
-      console.log('MorphologyService: Az.js initialized successfully')
+      console.log('Az.js: Starting dictionary loading...');
+      // ПРАВИЛЬНЫЙ ВЫЗОВ: асинхронно ждем завершения загрузки словарей.
+      await Az.init();
+      this.initialized = true;
+      console.log('Az.js: Dictionaries loaded successfully.');
     } catch (error) {
-      console.error('MorphologyService: Failed to initialize Az.js', error)
-      throw error
+      console.error('CRITICAL: Error during Az.init()', error);
+      // Сбрасываем промис, чтобы можно было попробовать снова (хотя при фатальной ошибке это вряд ли поможет)
+      this.initPromise = null; 
+      throw error; // Пробрасываем ошибку выше, чтобы плагин мог ее обработать
     }
   }
-  
-  /**
-   * Анализирует слово и возвращает морфологическую информацию
-   */
-  // async analyzeWord(word: string): Promise<MorphologyAnalysis | null> {
-  //   const normalizedWord = word.toLowerCase().trim()
-    
-  //   // Проверяем кеш
-  //   const cached = this.lemmaCache.get(normalizedWord)
-  //   if (cached) return cached
-    
-  //   return this.queue.add(async () => {
-  //     try {
-  //       const morphs = Az.Morph(normalizedWord)
-  //       if (morphs.length === 0) return null
-        
-  //       const best = morphs[0]
-  //       const analysis: MorphologyAnalysis = {
-  //         lemma: best.normalize().word,
-  //         pos: this.extractPOS(best.tag),
-  //         grammemes: best.tag.split(',').map(g => g.trim()),
-  //         score: best.score
-  //       }
-        
-  //       this.lemmaCache.set(normalizedWord, analysis)
-  //       return analysis
-  //     } catch (error) {
-  //       console.error(`MorphologyService: Error analyzing word "${word}"`, error)
-  //       return null
-  //     }
-  //   })
-  // }
-  //deepseek
-  async analyzeWord(word: string): Promise<MorphologyAnalysis | null> {
+
+  public async analyzeWord(word: string): Promise<MorphologyAnalysis | null> {
+    if (!this.initialized) {
+      throw new Error('MorphologyService is not initialized. Call initialize() first.');
+    }
     const normalizedWord = word.toLowerCase().trim();
     
     // Проверяем кеш
     const cached = this.lemmaCache.get(normalizedWord);
     if (cached) return cached;
-    
-    // Explicitly type the return value of the queue.add callback
-    const result = await this.queue.add<MorphologyAnalysis | null>(async () => {
-      try {
-        const morphs = Az.Morph(normalizedWord);
-        if (morphs.length === 0) return null;
-        
-        const best = morphs[0];
-        const analysis: MorphologyAnalysis = {
-          lemma: best.normalize().word,
-          pos: this.extractPOS(best.tag),
-          grammemes: best.tag.split(',').map(g => g.trim()),
-          score: best.score
-        };
-        
-        this.lemmaCache.set(normalizedWord, analysis);
-        return analysis;
-      } catch (error) {
-        console.error(`MorphologyService: Error analyzing word "${word}"`, error);
-        return null;
-      }
-    });
-    
-    return result ?? null; // Ensure we return null if result is undefined
-}
-  /**
-   * Анализирует текст и возвращает токены, леммы и другую информацию
-   */
-  // async analyzeText(text: string, useCache = true): Promise<TextAnalysis> {
-  //   const cacheKey = this.hashText(text)
-    
-  //   if (useCache) {
-  //     const cached = this.analysisCache.get(cacheKey)
-  //     if (cached) return cached
-  //   }
-    
-  //   return this.queue.add(async () => {
-  //     try {
-  //       const tokens = Az.Tokens(text).done()
-  //       const lemmas: string[] = []
-  //       const lemmaMap = new Map<string, number[]>()
-  //       let wordCount = 0
-        
-  //       // Обрабатываем токены
-  //       for (let i = 0; i < tokens.length; i++) {
-  //         const token = tokens[i]
-          
-  //         if (token.type === Az.TOKEN_WORD) {
-  //           wordCount++
-            
-  //           const analysis = await this.analyzeWord(token.text)
-  //           if (analysis) {
-  //             lemmas.push(analysis.lemma)
-              
-  //             // Добавляем позицию в карту лемм
-  //             const positions = lemmaMap.get(analysis.lemma) || []
-  //             positions.push(i)
-  //             lemmaMap.set(analysis.lemma, positions)
-  //           } else {
-  //             // Если не удалось проанализировать, используем исходное слово
-  //             lemmas.push(token.text.toLowerCase())
-  //           }
-  //         }
-  //       }
-        
-  //       const result: TextAnalysis = {
-  //         tokens,
-  //         lemmas,
-  //         lemmaMap,
-  //         wordCount
-  //       }
-        
-  //       if (useCache) {
-  //         this.analysisCache.set(cacheKey, result)
-  //       }
-        
-  //       return result
-  //     } catch (error) {
-  //       console.error('MorphologyService: Error analyzing text', error)
-  //       throw error
-  //     }
-  //   })
-  // }
+
+    try {
+      const morphs = Az.Morph(normalizedWord);
+      if (morphs.length === 0) return null;
+      
+      const best = morphs[0];
+      const analysis: MorphologyAnalysis = {
+        lemma: best.normalize().word,
+        pos: this.extractPOS(best.tag),
+        grammemes: best.tag.split(',').map(g => g.trim()),
+        score: best.score
+      };
+      
+      this.lemmaCache.set(normalizedWord, analysis);
+      return analysis;
+    } catch (error) {
+      console.error(`MorphologyService: Error analyzing word "${word}"`, error);
+      return null;
+    }
+  }
+
   async analyzeText(text: string, useCache = true): Promise<TextAnalysis> {
     const cacheKey = this.hashText(text);
     
     if (useCache) {
-      const cached = this.analysisCache.get(cacheKey);
+      const cached = this.textAnalysisCache.get(cacheKey);
       if (cached) return cached;
     }
+
+    const tokens = Az.Tokens(text).done();
+    const lemmas: string[] = [];
+    const lemmaMap = new Map<string, number[]>();
+    let wordCount = 0;
     
-    const result = await this.queue.add<TextAnalysis>(async (): Promise<TextAnalysis> => {
-      const tokens = Az.Tokens(text).done();
-      const lemmas: string[] = [];
-      const lemmaMap = new Map<string, number[]>();
-      let wordCount = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
       
-      for (let i = 0; i < tokens.length; i++) {
-        const token = tokens[i];
+      if (token.type === Az.TOKEN_WORD) {
+        wordCount++;
+        const analysis = await this.analyzeWord(token.text);
         
-        if (token.type === Az.TOKEN_WORD) {
-          wordCount++;
-          const analysis = await this.analyzeWord(token.text);
-          
-          if (analysis) {
-            lemmas.push(analysis.lemma);
-            const positions = lemmaMap.get(analysis.lemma) || [];
-            positions.push(i);
-            lemmaMap.set(analysis.lemma, positions);
-          } else {
-            lemmas.push(token.text.toLowerCase());
-          }
+        if (analysis) {
+          lemmas.push(analysis.lemma);
+          const positions = lemmaMap.get(analysis.lemma) || [];
+          positions.push(i);
+          lemmaMap.set(analysis.lemma, positions);
+        } else {
+          lemmas.push(token.text.toLowerCase());
         }
       }
-      
-      const result: TextAnalysis = {
-        tokens,
-        lemmas,
-        lemmaMap,
-        wordCount
-      };
-      
-      if (useCache) {
-        this.analysisCache.set(cacheKey, result);
-      }
-      
-      return result;
-    });
+    }
+    
+    const result: TextAnalysis = {
+      tokens,
+      lemmas,
+      lemmaMap,
+      wordCount
+    };
+    
+    if (useCache) {
+      this.textAnalysisCache.set(cacheKey, result);
+    }
+    
+    return result;
+  }
 
-    return result!; //HARDCODE
-}
-  /**
-   * Находит все формы слова в тексте
-   */
   async findWordForms(text: string, word: string): Promise<number> {
-    const wordAnalysis = await this.analyzeWord(word)
-    if (!wordAnalysis) return 0
+    const wordAnalysis = await this.analyzeWord(word);
+    if (!wordAnalysis) return 0;
     
-    const textAnalysis = await this.analyzeText(text)
-    const positions = textAnalysis.lemmaMap.get(wordAnalysis.lemma) || []
+    const textAnalysis = await this.analyzeText(text);
+    const positions = textAnalysis.lemmaMap.get(wordAnalysis.lemma) || [];
     
-    return positions.length
+    return positions.length;
   }
   
-  /**
-   * Находит многословное ключевое слово с учётом морфологии
-   */
   async findPhrase(text: string, phrase: string): Promise<number> {
-    // Анализируем фразу
-    const phraseAnalysis = await this.analyzeText(phrase, false)
-    const phraseLemmas = phraseAnalysis.lemmas.filter(l => l.length > 0)
+    const phraseAnalysis = await this.analyzeText(phrase, false);
+    const phraseLemmas = phraseAnalysis.lemmas.filter(l => l.length > 0);
     
-    if (phraseLemmas.length === 0) return 0
+    if (phraseLemmas.length === 0) return 0;
     
-    // Анализируем текст
-    const textAnalysis = await this.analyzeText(text)
-    const textLemmas = textAnalysis.lemmas
+    const textAnalysis = await this.analyzeText(text);
+    const textLemmas = textAnalysis.lemmas;
     
-    let count = 0
-    const windowSize = phraseLemmas.length
+    let count = 0;
+    const windowSize = phraseLemmas.length;
     
-    // Скользящее окно по тексту
     for (let i = 0; i <= textLemmas.length - windowSize; i++) {
-      let match = true
+      let match = true;
       
       for (let j = 0; j < windowSize; j++) {
         if (textLemmas[i + j] !== phraseLemmas[j]) {
-          match = false
-          break
+          match = false;
+          break;
         }
       }
       
       if (match) {
-        count++
+        count++;
       }
     }
     
-    return count
+    return count;
   }
   
-  /**
-   * Извлекает часть речи из тега
-   */
   private extractPOS(tag: string): string {
-    const firstTag = tag.split(',')[0]
+    const firstTag = tag.split(',')[0];
     const posMap: Record<string, string> = {
       'NOUN': 'существительное',
       'ADJF': 'прилагательное',
@@ -320,51 +194,38 @@ export class MorphologyService {
       'CONJ': 'союз',
       'PRCL': 'частица',
       'INTJ': 'междометие'
-    }
+    };
     
-    return posMap[firstTag] || 'неизвестно'
+    return posMap[firstTag] || 'неизвестно';
   }
   
-  /**
-   * Хеширует текст для кеширования
-   */
   private hashText(text: string): string {
-    // Простой хеш для кеширования (в продакшене можно использовать crypto)
-    let hash = 0
+    let hash = 0;
     for (let i = 0; i < text.length; i++) {
-      const char = text.charCodeAt(i)
-      hash = ((hash << 5) - hash) + char
-      hash = hash & hash // Convert to 32-bit integer
+      const char = text.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
     }
-    return hash.toString(36)
+    return hash.toString(36);
   }
   
-  /**
-   * Очищает кеши
-   */
   clearCache(): void {
-    this.lemmaCache.clear()
-    this.analysisCache.clear()
+    this.lemmaCache.clear();
+    this.textAnalysisCache.clear();
   }
   
-  /**
-   * Получает статистику кешей
-   */
   getCacheStats() {
     return {
       lemmaCache: {
         size: this.lemmaCache.size,
-        hits: this.lemmaCache.size, // В LRUCache нет встроенной статистики
+        hits: this.lemmaCache.size,
       },
       analysisCache: {
-        size: this.analysisCache.size,
-        hits: this.analysisCache.size,
-      },
-      queueSize: this.queue.size,
-      queuePending: this.queue.pending
-    }
+        size: this.textAnalysisCache.size,
+        hits: this.textAnalysisCache.size,
+      }
+    };
   }
 }
 
-// Экспортируем singleton instance
-export const morphologyService = MorphologyService.getInstance()
+export const morphologyService = MorphologyService.getInstance();
