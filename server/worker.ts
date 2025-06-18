@@ -10,14 +10,14 @@ const generator = new SEOGenerator();
 async function processTask(taskId: string) {
   console.log(`[${taskId}] Processing task...`);
   const taskData = await redis.get(taskId);
-
+  console.log('taskData', taskData);
   if (!taskData) {
     console.error(`[${taskId}] Task data not found in Redis.`);
     return;
   }
 
   const task = JSON.parse(taskData) as Task;
-
+  console.log('task', task);
   try {
     await updateTask(taskId, { status: 'processing' });
     const result = await generator.generateWithValidation(task.request!);
