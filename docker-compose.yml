@@ -19,7 +19,6 @@ services:
       - "3000:3000"
     environment:
       # ... env vars
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
       - redis
     restart: unless-stopped

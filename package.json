@@ -26,12 +26,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.16.0",
-    "@google/genai": "^1.5.1",
-    "@modelcontextprotocol/sdk": "^1.12.3",
     "@pinia/nuxt": "^0.5.1",
     "@vueuse/nuxt": "^10.7.0",
     "az": "^0.2.3",
-    "dotenv": "^16.5.0",
     "ioredis": "^5.3.2",
     "lru-cache": "^10.1.0",
     "p-queue": "^7.4.1",
