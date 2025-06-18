@@ -1,10 +1,9 @@
 
 
-import type { GenerationRequest, Task } from "~/types";
+import type { GenerationRequest, Task } from "../../types";
 import { createTask, updateTask } from "~/server/utils/redis";
 import { z } from "zod";
-
-
+import { main } from "../worker";
 // Схема валидации
 const requestSchema = z.object({
   productUrl: z
@@ -19,55 +18,21 @@ const requestSchema = z.object({
   adsPlanned: z.boolean(),
   canChangeVisuals: z.boolean(),
 });
-
-// export default defineEventHandler(async (event) => {
-//   try {
-//     // Валидация входных данных
-//     const body = await readBody(event);
-//     const validatedData = requestSchema.parse(body) as GenerationRequest;
-
-//     // Создаём задачу
-//     const taskId = await createTask(validatedData);
-
-//     // console.log("validatedData", validatedData);
-
-//     // console.log("taskId", taskId);
-
-//     return {
-//       taskId,
-//       status: "processing",
-//       message: "Генерация началась, проверьте статус через 10-30 секунд",
-//     };
-//   } catch (error) {
-//     if (error instanceof z.ZodError) {
-//       throw createError({
-//         statusCode: 400,
-//         statusMessage: "Validation error",
-//         data: error.errors,
-//       });
-//     }
-
-//     throw createError({
-//       statusCode: 500,
-//       statusMessage: "Internal server error",
-//     });
-//   }
-// });
-
+// main();
 export default defineEventHandler(async (event) => {
-  try {
-    const redis = getRedis();
+  try { 
     const body = await readBody(event);
+    const redis = getRedis();
     const requestData = requestSchema.parse(body) as GenerationRequest;
-
-    const taskId = `task:${Date.now()}`;
+    const taskId = `task:${Date.now()}:${Math.random().toString(36).substring(2, 9)}`;
     const task: Task = {
       id: taskId,
       status: 'queued', // Новый статус "в очереди"
       request: requestData,
       createdAt: new Date().toISOString(),
+      
     };
-
+    // main();
     // 1. Сохраняем полную информацию о задаче в HASH
     await redis.setex(taskId, 3600, JSON.stringify(task));
 
@@ -83,8 +48,10 @@ export default defineEventHandler(async (event) => {
   } catch (error) {
     // Обработка ошибок Zod и других
     if (error instanceof z.ZodError) {
+      console.error('[API] Validation error:', error.errors);
       throw createError({ statusCode: 400, statusMessage: 'Validation Error', data: error.errors });
     }
+    console.error('[API] Internal server error:', error);
     throw createError({ statusCode: 500, statusMessage: 'Internal Server Error' });
   }
 });

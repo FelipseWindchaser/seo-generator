@@ -1,4 +1,5 @@
 import type { Task } from "~/types";
+import { main } from "~/server/worker";
 
 export const repeatFunction = () => {
     const interval = 30000; 
@@ -11,10 +12,13 @@ export const repeatFunction = () => {
 
    
 }
-
+const getalltasks = async () => {
+  const result = await getProcessingTasks();
+  // console.log('getalltasks', result);
+}
+getalltasks(); 
 const processTask = async () => {
     console.log(`Вызов в ${new Date().toLocaleTimeString()}`);
-    
     //get tasks by status
     const tasks:Task[] = await getProcessingTasks();
     // console.log('tasks', tasks);

@@ -1,4 +1,4 @@
-import type { ValidationResult, GenerationRequest, ValidationMetrics, SemanticMetrics, ReadabilityMetrics } from '~/types'
+import type { ValidationResult, GenerationRequest, ValidationMetrics, SemanticMetrics, ReadabilityMetrics } from '../../types'
 import { morphologyService } from './morphology-service'
 
 export class ContentValidator {

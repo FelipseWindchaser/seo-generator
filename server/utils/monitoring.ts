@@ -1,4 +1,4 @@
-import type { GenerationRequest, GenerationResult } from "~/types";
+import type { GenerationRequest, GenerationResult } from "../../types";
 
 interface LogEntry {
   timestamp: string;

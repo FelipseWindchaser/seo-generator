@@ -6,7 +6,9 @@ import type { GenerationRequest } from '~/types';
 export default defineTask({
   async run(event) {
     const { taskId, requestData } = event.payload as { taskId: string; requestData: GenerationRequest };
-    const generator = new SEOGenerator();
+    //const config = useRuntimeConfig(event);
+    const config = useRuntimeConfig();
+    const generator = new SEOGenerator(config.geminiApiKey);
     try {
       console.log(`[Task ${taskId}] Starting generation...`);
       const result = await generator.generateWithValidation(requestData);

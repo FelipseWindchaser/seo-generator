@@ -1,7 +1,7 @@
 // server/utils/llm-generator.ts
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from '@google/genai';
-import type { GenerationRequest, GenerationResult, ValidationResult, KeywordDetail } from '~/types';
+import type { GenerationRequest, GenerationResult, ValidationResult, KeywordDetail } from '../../types';
 import { ContentValidator } from './content-validator';
 
 const safetySettings = [
@@ -15,12 +15,12 @@ export class SEOGenerator {
   private genAI: GoogleGenAI;
   private validator: ContentValidator;
 
-  constructor() {
-    const config = useRuntimeConfig();
-    if (!config.geminiApiKey) {
+  constructor(apiKey: string) {
+    console.log('Received in constructor:', apiKey);
+    if (!apiKey) {
       throw new Error('GEMINI_API_KEY is not set in environment variables');
     }
-    this.genAI = new GoogleGenAI({ apiKey: config.geminiApiKey });
+    this.genAI = new GoogleGenAI({ apiKey });
     this.validator = new ContentValidator();
   }
 

@@ -1,11 +1,27 @@
-import { getRedis, updateTask } from './utils/redis';
+console.log('🚀 Worker started. Waiting for tasks...');
+import { initializeRedis, getRedis, updateTask } from './utils/redis';
 import { SEOGenerator } from './utils/llm-generator';
-import type { Task } from '~/types';
+import 'dotenv/config';
+import type { Task } from '../types';
 
 console.log('🚀 Worker started. Waiting for tasks...');
+// process.on('uncaughtException', (err, origin) => { console.error(`UNCAUGHT EXCEPTION: ${origin}`, err); process.exit(1); });
+// process.on('unhandledRejection', (reason, promise) => { console.error('UNHANDLED REJECTION:', reason); });
 
+// try {
+
+const redisUrl = process.env.REDIS_URL;
+const geminiApiKey = process.env.GEMINI_API_KEY;
+
+if (!redisUrl || !geminiApiKey) {
+  throw new Error('Missing REDIS_URL or GEMINI_API_KEY in .env file.');
+}
+
+initializeRedis(redisUrl);
 const redis = getRedis();
-const generator = new SEOGenerator();
+const generator = new SEOGenerator(geminiApiKey);
+
+console.log('✅ Worker initialized successfully. Waiting for tasks...');
 
 async function processTask(taskId: string) {
   console.log(`[${taskId}] Processing task...`);
@@ -39,12 +55,13 @@ async function processTask(taskId: string) {
   }
 }
 
-async function main() {
+export async function main() {
   while (true) {
     try {
       // BRPOP атомарно извлекает элемент из списка. '0' означает ждать вечно.
       // Это самый эффективный способ слушать очередь.
       const result = await redis.brpop('tasks:queue', 0);
+      console.log('result', result);
       if (result) {
         const taskId = result[1];
         await processTask(taskId);
@@ -57,4 +74,9 @@ async function main() {
   }
 }
 
-main();
+
+// } catch (error) {
+//   console.error(`!!!!!!!!!! WORKER FAILED TO START !!!!!!!!!!!`);
+//   console.error(error);
+//   process.exit(1);
+// }

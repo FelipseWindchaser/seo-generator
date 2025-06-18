@@ -1,15 +1,36 @@
 import Redis from "ioredis";
-import type { GenerationRequest, Task } from "~/types";
+import type { GenerationRequest, Task } from "../../types";
+import { SEOGenerator } from "./llm-generator";
 
-let redis: Redis | null = null;
+let redisInstance: Redis | null = null;
+
+const generator = new SEOGenerator(process.env.GEMINI_API_KEY || '');
+/**
+ * Инициализирует и возвращает единственный экземпляр Redis.
+ * Эта функция должна вызываться с URL при первом запуске.
+ * @param redisUrl - URL для подключения к Redis.
+ */
+export function initializeRedis(redisUrl: string): Redis {
+  if (redisInstance) {
+    console.warn("Redis is already initialized.");
+    return redisInstance;
+  }
+  if (!redisUrl) {
+    throw new Error("Redis URL must be provided for initialization.");
+  }
+  redisInstance = new Redis(redisUrl);
+  console.log("Redis client initialized.");
+  return redisInstance;
+}
 
 export function getRedis(): Redis {
-  if (!redis) {
-    const config = useRuntimeConfig();
-    redis = new Redis(config.redisUrl);
+  if (!redisInstance) {
+    throw new Error("Redis has not been initialized. Call initializeRedis(url) first.");
   }
-  return redis;
+  return redisInstance;
 }
+// Остальные функции (updateTask и т.д.) остаются без изменений,
+// так как они используют getRedis() для получения инстанса.
 
 export async function createTask(request: GenerationRequest): Promise<string> {
   const redis = getRedis();
@@ -38,6 +59,54 @@ export async function createTask(request: GenerationRequest): Promise<string> {
 async function getTaskTtl(taskId: string) {
   const redis = getRedis();
   return await redis.ttl(taskId); // -2 если ключа нет, -1 если нет TTL
+}
+
+async function processTask(taskId: string) {
+  console.log(`[${taskId}] Processing task...`);
+  
+  // ИСПРАВЛЕНО: Добавляем проверку здесь же.
+  // const taskData = await getRedis().get(taskId);
+
+  // if (!taskData) {
+  //   console.error(`[processTask] Task data for ${taskId} not found. It might have expired. Skipping task.`);
+  //   return; // <-- Просто переходим к следующей задаче
+  // }
+
+  // const task = JSON.parse(taskData) as Task;
+
+  try {// 1. Устанавливаем статус "в обработке". `updateTask` сам справится, если задача уже удалена.
+    await updateTask(taskId, { status: 'processing' });
+
+    // 2. Получаем актуальные данные задачи для генератора.
+    // Эта проверка нужна, так как между `updateTask` и этим моментом могло что-то произойти.
+    const currentTaskData = await getRedis().get(taskId);
+    if (!currentTaskData) {
+        console.warn(`[processTask] Task ${taskId} disappeared after setting status to processing. Skipping.`);
+        return;
+    }
+    const task = JSON.parse(currentTaskData) as Task;
+    
+    // 3. Запускаем генерацию.
+    const result = await generator.generateWithValidation(task.request!);
+
+    // 4. Обновляем задачу с финальным результатом.
+    await updateTask(taskId, {
+      status: 'completed',
+      result,
+      completedAt: new Date().toISOString(),
+    });
+    console.log(`[${taskId}] Task completed successfully.`);
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown worker error';
+    console.error(`[${taskId}] Task failed:`, errorMessage);
+    // 5. В случае ошибки обновляем задачу со статусом "error".
+    await updateTask(taskId, {
+      status: 'error',
+      error: errorMessage,
+      completedAt: new Date().toISOString(),
+    });
+  }
 }
 
 export async function getTask(taskId: string): Promise<Task | null> {
@@ -80,33 +149,35 @@ export async function getProcessingTasks(): Promise<Task[]> {
   }
 }
 // get task object by id
-const getalltasks = async () => {
-  const result = await getProcessingTasks();
-  // console.log('getalltasks', result);
-}
-getalltasks();
+// const getalltasks = async () => {
+//   const result = await getProcessingTasks();
+//   // console.log('getalltasks', result);
+// }
+// getalltasks();
 
+/**
+ * Обновляет данные задачи в Redis.
+ * @param taskId - ID задачи (например, 'task:12345').
+ * @param updates - Объект с полями для обновления.
+ */
 export async function updateTask(
   taskId: string,
   updates: Partial<Task>
-): Promise<Task> {
+): Promise<Task | void> {
   const redis = getRedis();
   const task = await getTask(taskId);
+  //cursor
+  if (!task) {
+    console.warn(`[updateTask] Task data for ${taskId} not found. It might have expired. Skipping update.`);
+    return;
+  }
 
-  if (!task) throw new Error("Task not found");
-
-  const updatedTask = { ...task, ...updates };
+  const updatedTask: Task = { ...task, ...updates };
 
   await redis.setex(`task:${taskId}`, 36000, JSON.stringify(updatedTask));
   return updatedTask;
 }
-// update task status by id for testing
-// const update = async () => {
-//   const result = await updateTask('task_1749125738893_3v8dc4qo9', { status: 'completed' });
-//   // console.log('update', result);
-// }
-// update();
 
-import { repeatFunction } from '~/composables/processGeneration';
-repeatFunction();
+// import { repeatFunction } from '~/composables/processGeneration';
+// repeatFunction();
 
