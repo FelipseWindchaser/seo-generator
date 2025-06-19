@@ -60,7 +60,7 @@
 
       <!-- Контент -->
       <div class="bg-white border border-gray-200 rounded-lg p-6">
-        <!-- <div class="prose max-w-none" v-html="formattedContent" /> -->
+        <div class="prose max-w-none" v-html="formattedContent" />
       </div>
 
       <!-- Кнопки действий -->
@@ -96,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import type { GenerationResult } from "~/types";
+import type { GenerationResult, Task } from "~/types";
 
 const props = defineProps<{
   taskId: string;
@@ -108,25 +108,25 @@ const emit = defineEmits<{
 
 // Состояние
 const status = ref<"processing" | "completed" | "error">("processing");
-// const result = ref<GenerationResult | null>(null);
+const result = ref<GenerationResult | null>(null);
 const error = ref<string>("");
 const copied = ref(false);
 
 // Проверка статуса
 const checkStatus = async () => {
   try {
-    const response = await $fetch(`/api/status/${props.taskId}`);
+    const response = (await $fetch(`/api/status/${props.taskId}`)) as Task;
     console.log(response);
 
     if (response.status === "completed") {
       status.value = "completed";
-      // result.value = response.result;
+      result.value = response?.result || null;
     } else if (response.status === "error") {
       status.value = "error";
       // error.value = response.error || "Неизвестная ошибка";
-    } else if (response.status === "not_found") {
-      status.value = "error";
-      error.value = "Задача не найдена";
+      // } else if (response.status === "not_found") {
+      //   status.value = "error";
+      //   error.value = "Задача не найдена";
     }
     // Если processing - продолжаем проверку
   } catch (err) {
@@ -136,13 +136,13 @@ const checkStatus = async () => {
 };
 
 // Форматирование контента (преобразование ** в <strong>)
-// const formattedContent = computed(() => {
-//   if (!result.value) return "";
+const formattedContent = computed(() => {
+  if (!result.value) return "";
 
-//   return result.value.content
-//     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-//     .replace(/\n/g, "<br>");
-// });
+  return result.value.content
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n/g, "<br>");
+});
 
 // Копирование в буфер обмена
 const copyToClipboard = async () => {

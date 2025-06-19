@@ -58,7 +58,7 @@ export interface GenerationResult {
   content: string;
   title: string;
   description: string;
-  metrics: ValidationMetrics & {
+  metrics?: ValidationMetrics & {
     keywordDetails: KeywordDetail[];
     boldKeywordsCount: number;
     utpCovered: number;
