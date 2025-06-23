@@ -201,6 +201,7 @@ export class MorphologyService {
   //   })
   // }
   async analyzeText(text: string, useCache = true): Promise<TextAnalysis> {
+    
     const cacheKey = this.hashText(text);
     
     if (useCache) {
