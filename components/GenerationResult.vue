@@ -149,7 +149,7 @@ const copyToClipboard = async () => {
   // if (!result.value) return;
 
   try {
-    // await navigator.clipboard.writeText(result.value.content);
+    await navigator.clipboard.writeText(result.value?.content || "");
     copied.value = true;
     setTimeout(() => {
       copied.value = false;

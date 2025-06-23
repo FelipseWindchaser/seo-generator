@@ -40,9 +40,9 @@ export class GenerationMonitor {
       },
       result: {
         success: result.success,
-        charCount: result.metrics.charCount,
-        keywordsUsed: result.metrics.keywordsUsed,
-        keywordDensity: result.metrics.keywordDensity,
+        charCount: result.metrics?.charCount || 0,
+        keywordsUsed: result.metrics?.keywordsUsed || 0,
+        keywordDensity: result.metrics?.keywordDensity || 0,
         attempts: result.attempts,
         warnings: result.warnings?.length || 0,
       },

@@ -100,12 +100,6 @@ export async function updateTask(
   await redis.setex(`task:${taskId}`, 36000, JSON.stringify(updatedTask));
   return updatedTask;
 }
-// update task status by id for testing
-// const update = async () => {
-//   const result = await updateTask('task_1749125738893_3v8dc4qo9', { status: 'completed' });
-//   // console.log('update', result);
-// }
-// update();
 
 import { repeatFunction } from '~/composables/processGeneration';
 repeatFunction();

@@ -34,7 +34,7 @@ const generateTextFromTask = async (task: Task) => {
           {
             parts: [
               {
-                text: `Сгенерируй текст для товара ${task.request?.productUrl} с ключевыми словами ${task.request?.keywords.join(', ')} с отзывами ${task.request?.reviews} и уникальными торговыми предложениями ${task.request?.usp}`
+                text: `Сгенерируй текст для товара ${task.request?.productUrl} с ключевыми словами ${task.request?.keywords.join(', ')} с отзывами ${task.request?.reviews} и уникальными торговыми предложениями ${task.request?.usp}. Выведи в ответе ссылку на товар и опиши ее содержание.`
               }
             ]
           }

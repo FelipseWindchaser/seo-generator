@@ -103,13 +103,6 @@
       <LoadingSpinner v-if="loading" class="mr-2" />
       {{ loading ? "Генерируем..." : "Сгенерировать SEO-описание" }}
     </button>
-    <!-- <button
-      type="button"
-      @click="onTestSubmit"
-      class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-300 disabled:cursor-not-allowed"
-    >
-      {{ "Имитация генерации" }}
-    </button> -->
 
     <!-- Ошибки валидации -->
     <div v-if="errors.length > 0" class="mt-4 p-4 bg-red-50 rounded-md">
@@ -202,27 +195,4 @@ const onSubmit = () => {
   // router.push(`/tasks/${taskId.value}`);
   emit("submit", data);
 };
-// const onTestSubmit = async () => {
-//   console.log("test");
-
-//   const task = await useSeoGenerator().getTaskStatus(
-//     "task_1749125738893_3v8dc4qo9"
-//   );
-//   // console.log("task", task);
-//   // if (!task) {
-//   //   return console.log("task not found");
-//   // task.status = "completed";
-//   // } else {
-//   // const response = await useSeoGenerator().updateTaskStatus(
-//   //   "task_1749125738893_3v8dc4qo9",
-//   //   "processing"
-//   // );
-//   // console.log("response", response);
-// };
-//find created task by id
-//start generation
-//validate results, repeat if needed
-//update task status
-//return results
-// };
 </script>
