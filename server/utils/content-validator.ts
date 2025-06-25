@@ -25,7 +25,7 @@ export class ContentValidator {
     const issues: string[] = []
     
     // Проверки остаются те же...
-    // this.checkLength(metrics, issues)
+    this.checkLength(metrics, issues)
     this.checkKeywordUsage(metrics, keywords.length, issues)
     this.checkDensity(metrics, issues)
     this.checkReadabilityIssues(readability, issues)
@@ -255,17 +255,17 @@ export class ContentValidator {
   }
   
   // Вспомогательные методы для проверок
-  // private checkLength(metrics: any, issues: string[]): void {
-  //   if (metrics.charCount < this.minChars) {
-  //     issues.push(
-  //       `❌ Текст короткий: ${metrics.charCount} символов (нужно ${this.minChars}-${this.maxChars})`
-  //     )
-  //   } else if (metrics.charCount > this.maxChars) {
-  //     issues.push(
-  //       `❌ Текст длинный: ${metrics.charCount} символов (максимум ${this.maxChars})`
-  //     )
-  //   }
-  // }
+  private checkLength(metrics: any, issues: string[]): void {
+    if (metrics.charCount < this.minChars) {
+      issues.push(
+        `❌ Текст короткий: ${metrics.charCount} символов (нужно ${this.minChars}-${this.maxChars})`
+      )
+    } else if (metrics.charCount > this.maxChars) {
+      issues.push(
+        `❌ Текст длинный: ${metrics.charCount} символов (максимум ${this.maxChars})`
+      )
+    }
+  }
   
   private checkKeywordUsage(metrics: any, totalKeywords: number, issues: string[]): void {
     if (metrics.keywordsUsed < this.minKeywordsUsed) {

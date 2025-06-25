@@ -192,7 +192,6 @@ const onSubmit = () => {
     keywords: keywords.value,
     usp: usp.value,
   };
-
   // router.push(`/tasks/${taskId.value}`);
   emit("submit", data);
 };
