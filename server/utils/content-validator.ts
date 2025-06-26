@@ -1,5 +1,6 @@
 import type { ValidationResult, GenerationRequest, ValidationMetrics, SemanticMetrics, ReadabilityMetrics } from '~/types'
 import { morphologyService } from './morphology-service'
+import type { TextAnalysis } from '~/types/morphology'
 
 export class ContentValidator {
   private readonly minChars = 1800

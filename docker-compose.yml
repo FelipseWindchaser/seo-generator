@@ -27,7 +27,7 @@ services:
     build:
       context: ../pymorphy2
       dockerfile: Dockerfile
-    container_name: pymorphy_api_service
+    container_name: morphology_service
     ports:
       - "5000:5000"
     restart: unless-stopped
