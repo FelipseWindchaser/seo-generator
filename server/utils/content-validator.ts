@@ -283,7 +283,7 @@ export class ContentValidator {
   private checkKeywordUsage(metrics: any, totalKeywords: number, issues: string[]): void {
     if (metrics.keywordsUsed < this.minKeywordsUsed) {
       issues.push(
-        `❌ Мало ключей: ${metrics.keywordsUsed} из ${totalKeywords} (минимум ${this.minKeywordsUsed})`
+        `❌ Мало ключей: ${metrics.keywordsUsed} из ${totalKeywords} (минимум ${this.minKeywordsUsed}. Пропущенные ключи: ${metrics.missingKeywords.join(', ')})`
       );
     }
   }
@@ -302,11 +302,11 @@ export class ContentValidator {
   
   private checkReadabilityIssues(readability: any, issues: string[]): void {
     if (readability.avgSentenceLength > 25) {
-      issues.push("⚠️ Слишком длинные предложения (среднее > 25 слов)");
+      issues.push("⚠️ Слишком длинные предложения (среднее > 25 слов). Текущее значение: " + readability.avgSentenceLength + " слов");
     }
     
     if (readability.complexWordsRatio > 15) {
-      issues.push("⚠️ Много сложных слов (> 15%), текст трудночитаем");
+      issues.push("⚠️ Много сложных слов (> 15%), текст трудночитаем. Текущее значение: " + readability.complexWordsRatio + "%");
     }
   }
   
@@ -316,11 +316,11 @@ export class ContentValidator {
     }
     
     if (semantic.lowCoherenceScore) {
-      issues.push("⚠️ Низкая связность текста между абзацами");
+      issues.push("⚠️ Низкая связность текста между абзацами. Текущее значение: " + semantic.avgCoherence + " (нужно > 0.15)");
     }
     
     if (semantic.adClichesCount > 3) {
-      issues.push("⚠️ Много рекламных штампов, текст выглядит навязчиво");
+      issues.push("⚠️ Много рекламных штампов, текст выглядит навязчиво. Текущее значение: " + semantic.adClichesCount + " (нужно < 3)");
     }
   }
 
