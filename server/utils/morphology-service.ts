@@ -451,12 +451,22 @@ export class MorphologyService {
     }
   }
 
-  async findWordForms(text: string, word: string): Promise<number> {
+  // async findWordForms(text: string, word: string): Promise<number> {
+  //   const wordAnalysis = await this.analyzeWord(word);
+  //   if (!wordAnalysis) return 0;
+
+  //   const textAnalysis = await this.analyzeText(text);
+  //   const positions = textAnalysis.lemmaMap.get(wordAnalysis.lemma) || [];
+  //   return positions.length;
+  // }
+
+  async findWordForms(text: string, word: string, textAnalysis?: TextAnalysis): Promise<number> {
     const wordAnalysis = await this.analyzeWord(word);
     if (!wordAnalysis) return 0;
 
-    const textAnalysis = await this.analyzeText(text);
-    const positions = textAnalysis.lemmaMap.get(wordAnalysis.lemma) || [];
+    // Если анализ текста не передан, делаем новый запрос. Иначе используем готовый.
+    const analysis = textAnalysis || await this.analyzeText(text);
+    const positions = analysis.lemmaMap.get(wordAnalysis.lemma) || [];
     return positions.length;
   }
 

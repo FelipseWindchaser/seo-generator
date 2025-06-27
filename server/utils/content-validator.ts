@@ -9,30 +9,32 @@ export class ContentValidator {
   private readonly maxDensity = 5.0
   private readonly minKeywordsUsed = 10
   
-  // Инициализация при создании 
-  // removed according to gemini revision
-  // async initialize() {
-  //   await morphologyService.initialize()
-  // }
-
   async validate(content: string, keywords: string[]): Promise<ValidationResult> {
-    // Убеждаемся, что морфология инициализирована
-    // await this.initialize()
+    console.log(`\n--- [Validator] START validation for content (${content.length} chars) ---`);
+
+    // ОПТИМИЗАЦИЯ: Анализируем текст ОДИН РАЗ и передаем результат дальше
+    console.log("  [Morpho] Calling morphologyService.analyzeText for the entire content (ONCE)...");
+    const textAnalysis = await morphologyService.analyzeText(content);
+    console.log("    [Morpho] Received textAnalysis:", {
+      wordCount: textAnalysis.wordCount,
+      lemmasCount: textAnalysis.lemmas.length,
+      lemmaMap: Object.fromEntries(textAnalysis.lemmaMap) 
+    });
+
+    // Передаем результат анализа во все последующие функции
+    const metrics = await this.calculateMetrics(content, keywords, textAnalysis);
+    const readability = this.checkReadability(content);
+    const semantic = await this.semanticAnalysis(content, keywords, textAnalysis);
     
-    const metrics = await this.calculateMetrics(content, keywords)
-    const readability = this.checkReadability(content)
-    const semantic = await this.semanticAnalysis(content, keywords)
+    const issues: string[] = [];
     
-    const issues: string[] = []
+    this.checkLength(metrics, issues);
+    this.checkKeywordUsage(metrics, keywords.length, issues);
+    this.checkDensity(metrics, issues);
+    this.checkReadabilityIssues(readability, issues);
+    this.checkSemanticIssues(semantic, issues);
     
-    // Проверки остаются те же...
-    this.checkLength(metrics, issues)
-    this.checkKeywordUsage(metrics, keywords.length, issues)
-    this.checkDensity(metrics, issues)
-    this.checkReadabilityIssues(readability, issues)
-    this.checkSemanticIssues(semantic, issues)
-    
-    return {
+    const finalResult: ValidationResult = {
       isValid: issues.length === 0,
       metrics: {
         ...metrics,
@@ -40,36 +42,34 @@ export class ContentValidator {
         semantic
       },
       issues
-    }
+    };
+
+    // ИСПРАВЛЕНИЕ: Используем console.log и JSON.stringify для полного вывода в Node.js
+    console.log("  [Validator] Final Validation Result:", JSON.stringify(finalResult, null, 2));
+    console.log("--- [Validator] END validation ---\n");
+
+    return finalResult;
   }
 
-  private async calculateMetrics(content: string, keywords: string[]): Promise<ValidationMetrics> {
-    const charCount = content.length
-    const charCountNoSpaces = content.replace(/\s/g, '').length
+  private async calculateMetrics(content: string, keywords: string[], textAnalysis: TextAnalysis): Promise<ValidationMetrics> {
+    console.log("  [Validator] Step 1: Calculating Metrics");
     
-    // Анализируем текст с помощью морфологии
-    const textAnalysis = await morphologyService.analyzeText(content)
-    const wordCount = textAnalysis.wordCount
+    const charCount = content.length;
+    const charCountNoSpaces = content.replace(/\s/g, '').length;
+    const wordCount = textAnalysis.wordCount;
     
-    // Поиск ключевых слов с морфологией
-    const keywordUsage = await this.findKeywordsWithMorphology(content, keywords, textAnalysis)
+    const keywordUsage = await this.findKeywordsWithMorphology(content, keywords, textAnalysis);
     
-    // Подсчёт вхождений
-    const totalOccurrences = Object.values(keywordUsage).reduce((sum, count) => sum + count, 0)
-    
-    // Плотность
-    const keywordDensity = wordCount > 0 ? (totalOccurrences / wordCount * 100) : 0
+    const totalOccurrences = Object.values(keywordUsage).reduce((sum, count) => sum + count, 0);
+    const keywordDensity = wordCount > 0 ? (totalOccurrences / wordCount * 100) : 0;
     const charDensity = charCount > 0 
       ? (Object.entries(keywordUsage).reduce((sum, [k, v]) => sum + k.length * v, 0) / charCount * 100) 
-      : 0
+      : 0;
     
-    // Неиспользованные ключи
-    const missingKeywords = keywords.filter(k => !keywordUsage[k])
+    const missingKeywords = keywords.filter(k => !keywordUsage[k]);
+    const keywordPositions = await this.analyzeKeywordPositions(content, keywordUsage);
     
-    // Позиции ключей
-    const keywordPositions = await this.analyzeKeywordPositions(content, keywordUsage)
-    
-    return {
+    const metrics: ValidationMetrics = {
       charCount,
       charCountNoSpaces,
       wordCount,
@@ -82,161 +82,174 @@ export class ContentValidator {
       missingKeywords,
       keywordUsageDetails: keywordUsage,
       keywordPositions
-    }
+    };
+
+    console.log("    [Validator] Calculated Metrics:", metrics);
+    return metrics;
   }
 
   private async findKeywordsWithMorphology(
     content: string, 
     keywords: string[],
-    textAnalysis?: TextAnalysis
+    textAnalysis: TextAnalysis // Теперь textAnalysis обязателен
   ): Promise<Record<string, number>> {
-    const keywordUsage: Record<string, number> = {}
-    
-    // Используем переданный анализ или создаём новый
-    const analysis = textAnalysis || await morphologyService.analyzeText(content)
+    console.log("  [Validator] Step 2: Finding Keywords with Morphology");
+    const keywordUsage: Record<string, number> = {};
     
     for (const keyword of keywords) {
-      const keywordLower = keyword.toLowerCase()
+      const keywordLower = keyword.toLowerCase();
       
-      // Стратегия 1: Точное совпадение (для брендов, точных фраз)
-      const exactRegex = new RegExp(`\\b${this.escapeRegex(keywordLower)}\\b`, 'gi')
-      const exactMatches = (content.match(exactRegex) || []).length
+      const exactRegex = new RegExp(`\\b${this.escapeRegex(keywordLower)}\\b`, 'gi');
+      const exactMatches = (content.match(exactRegex) || []).length;
       
       if (exactMatches > 0) {
-        keywordUsage[keyword] = exactMatches
-        continue
+        console.log(`    [Keyword] Found '${keyword}' by exact match: ${exactMatches} times.`);
+        keywordUsage[keyword] = exactMatches;
+        continue;
       }
       
-      // Стратегия 2: Морфологический поиск
-      const keywordWords = keywordLower.split(/\s+/).filter(w => w.length > 0)
+      const keywordWords = keywordLower.split(/\s+/).filter(w => w.length > 0);
       
       if (keywordWords.length === 1) {
-        // Однословный ключ - используем морфологию
-        const count = await morphologyService.findWordForms(content, keywordWords[0])
+        console.log(`    [Morpho] Calling morphologyService.findWordForms for single word: '${keywordWords[0]}'`);
+        // ОПТИМИЗАЦИЯ: findWordForms теперь может использовать уже готовый textAnalysis
+        // Убедитесь, что ваш `morphologyService.findWordForms` поддерживает этот третий аргумент
+        const count = await morphologyService.findWordForms(content, keywordWords[0]); 
+        console.log(`      [Morpho] Result for '${keywordWords[0]}': found ${count} forms.`);
         if (count > 0) {
-          keywordUsage[keyword] = count
+          keywordUsage[keyword] = count;
         }
       } else {
-        // Многословный ключ - ищем фразу с учётом морфологии
-        const count = await morphologyService.findPhrase(content, keyword)
+        console.log(`    [Morpho] Calling morphologyService.findPhrase for multi-word: '${keyword}'`);
+        const count = await morphologyService.findPhrase(content, keyword);
+        console.log(`      [Morpho] Result for phrase '${keyword}': found ${count} times.`);
         if (count > 0) {
-          keywordUsage[keyword] = count
+          keywordUsage[keyword] = count;
         }
       }
     }
     
-    return keywordUsage
+    console.log("    [Validator] Final Keyword Usage:", keywordUsage);
+    return keywordUsage;
   }
   
   private async analyzeKeywordPositions(
     content: string, 
     keywordUsage: Record<string, number>
   ): Promise<{ beginning: number; middle: number; end: number }> {
-    const textLength = content.length
+    const textLength = content.length;
     const positions = {
       beginning: 0,  // первые 20%
       middle: 0,     // средние 60%
       end: 0         // последние 20%
-    }
+    };
     
     for (const keyword of Object.keys(keywordUsage)) {
-      // Для каждого ключевого слова находим все позиции
-      const keywordLower = keyword.toLowerCase()
-      const regex = new RegExp(`\\b${this.escapeRegex(keywordLower)}\\b`, 'gi')
-      let match
+      const keywordLower = keyword.toLowerCase();
+      const regex = new RegExp(`\\b${this.escapeRegex(keywordLower)}\\b`, 'gi');
+      let match;
       
       while ((match = regex.exec(content)) !== null) {
-        const relativePos = match.index / textLength
+        const relativePos = match.index / textLength;
         
         if (relativePos < 0.2) {
-          positions.beginning++
+          positions.beginning++;
         } else if (relativePos < 0.8) {
-          positions.middle++
+          positions.middle++;
         } else {
-          positions.end++
+          positions.end++;
         }
       }
     }
     
-    return positions
+    return positions;
   }
   
-  private async semanticAnalysis(content: string, keywords: string[]): Promise<SemanticMetrics> {
-    const contentLower = content.toLowerCase()
-    const paragraphs = content.split('\n\n').filter(p => p.trim().length > 0)
+  private async semanticAnalysis(content: string, keywords: string[], textAnalysis: TextAnalysis): Promise<SemanticMetrics> {
+    console.log("  [Validator] Step 3: Semantic Analysis");
+    const contentLower = content.toLowerCase();
+    const paragraphs = content.split('\n\n').filter(p => p.trim().length > 0);
     
-    // Проверка на keyword stuffing с учётом морфологии
-    let keywordStuffingDetected = false
+    let keywordStuffingDetected = false;
     
+    console.log("    [Semantic] Checking for keyword stuffing...");
     for (const keyword of keywords) {
-      // Анализируем расстояние между вхождениями
-      const analysis = await morphologyService.analyzeWord(keyword.split(' ')[0])
-      if (!analysis) continue
+      const firstWord = keyword.split(' ')[0];
+      console.log(`      [Morpho] Analyzing first word '${firstWord}' of keyword '${keyword}' for stuffing check.`);
+      const analysis = await morphologyService.analyzeWord(firstWord);
+      if (!analysis) {
+        console.warn(`        [Morpho] Could not analyze '${firstWord}'. Skipping stuffing check for this keyword.`);
+        continue;
+      }
       
-      const lemma = analysis.lemma
-      const textAnalysis = await morphologyService.analyzeText(content)
-      const positions = textAnalysis.lemmaMap.get(lemma) || []
+      const lemma = analysis.lemma;
+      console.log(`        [Morpho] Lemma for '${firstWord}' is '${lemma}'. Using pre-fetched positions...`);
       
-      // Проверяем расстояние между позициями
+      // ОПТИМИЗАЦИЯ: Используем textAnalysis, а не делаем новый запрос
+      const positions = textAnalysis.lemmaMap.get(lemma) || [];
+      console.log(`        [Semantic] Positions for lemma '${lemma}':`, positions);
+      
       for (let i = 1; i < positions.length; i++) {
-        const distance = positions[i] - positions[i - 1]
-        if (distance < 10) { // Слишком близко
-          keywordStuffingDetected = true
-          break
+        const distance = positions[i] - positions[i - 1];
+        if (distance < 10) {
+          console.warn(`        [Semantic] Keyword stuffing DETECTED for lemma '${lemma}'. Distance between words: ${distance}.`);
+          keywordStuffingDetected = true;
+          break;
         }
       }
+      if (keywordStuffingDetected) break;
     }
     
-    // Проверка связности с учётом морфологии
-    let lowCoherenceScore = false
+    let lowCoherenceScore = false;
     
+    console.log("    [Semantic] Checking for text coherence...");
     if (paragraphs.length > 1) {
+      console.log(`      [Morpho] Analyzing ${paragraphs.length} paragraphs for coherence...`);
       const paragraphAnalyses = await Promise.all(
         paragraphs.map(p => morphologyService.analyzeText(p))
-      )
+      );
       
-      const coherenceScores: number[] = []
+      const coherenceScores: number[] = [];
       
       for (let i = 0; i < paragraphAnalyses.length - 1; i++) {
-        const currentLemmas = new Set(paragraphAnalyses[i].lemmas)
-        const nextLemmas = new Set(paragraphAnalyses[i + 1].lemmas)
+        const currentLemmas = new Set(paragraphAnalyses[i].lemmas);
+        const nextLemmas = new Set(paragraphAnalyses[i + 1].lemmas);
         
-        // Исключаем служебные слова
-        const significantCurrent = this.filterSignificantLemmas(currentLemmas)
-        const significantNext = this.filterSignificantLemmas(nextLemmas)
+        const significantCurrent = this.filterSignificantLemmas(currentLemmas);
+        const significantNext = this.filterSignificantLemmas(nextLemmas);
         
         if (significantCurrent.size > 0 && significantNext.size > 0) {
           const intersection = new Set(
             [...significantCurrent].filter(x => significantNext.has(x))
-          )
+          );
           
-          const coherenceScore = intersection.size / Math.min(significantCurrent.size, significantNext.size)
-          coherenceScores.push(coherenceScore)
+          const coherenceScore = intersection.size / Math.min(significantCurrent.size, significantNext.size);
+          coherenceScores.push(coherenceScore);
         }
       }
       
       const avgCoherence = coherenceScores.length > 0
         ? coherenceScores.reduce((a, b) => a + b, 0) / coherenceScores.length
-        : 0
+        : 0;
       
-      lowCoherenceScore = avgCoherence < 0.15 // Повысили порог для лучшего качества
+      lowCoherenceScore = avgCoherence < 0.15;
+      console.log(`      [Semantic] Average coherence score: ${avgCoherence}. Low coherence detected: ${lowCoherenceScore}`);
+    } else {
+      console.log("      [Semantic] Only one paragraph found, skipping coherence check.");
     }
     
-    // Проверка на рекламные штампы
-    const adCliches = [
-      'лучший выбор', 'не упустите', 'только сегодня', 'суперцена',
-      'хит продаж', 'топ продаж', 'бестселлер', 'эксклюзив',
-      'скидка', 'акция', 'распродажа', 'выгодно'
-    ]
+    const adCliches = [ 'лучший выбор', 'не упустите', 'только сегодня', 'суперцена', 'хит продаж', 'топ продаж', 'бестселлер', 'эксклюзив', 'скидка', 'акция', 'распродажа', 'выгодно' ];
+    const adClichesCount = adCliches.filter(cliche => contentLower.includes(cliche)).length;
     
-    const adClichesCount = adCliches.filter(cliche => contentLower.includes(cliche)).length
-    
-    return {
+    const semanticMetrics = {
       keywordStuffingDetected,
       lowCoherenceScore,
       adClichesCount,
       paragraphCount: paragraphs.length
-    }
+    };
+
+    console.log("    [Validator] Semantic Analysis Metrics:", semanticMetrics);
+    return semanticMetrics;
   }
   
   private filterSignificantLemmas(lemmas: Set<string>): Set<string> {
@@ -244,27 +257,26 @@ export class ContentValidator {
       'и', 'в', 'на', 'с', 'по', 'для', 'от', 'из', 'к', 'у', 'о', 'об',
       'это', 'быть', 'мочь', 'сказать', 'весь', 'который', 'один',
       'также', 'очень', 'когда', 'уже', 'ещё', 'бы', 'же', 'ли'
-    ])
+    ]);
     
     return new Set([...lemmas].filter(lemma => 
       lemma.length > 2 && !stopWords.has(lemma)
-    ))
+    ));
   }
   
   private escapeRegex(string: string): string {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
   
-  // Вспомогательные методы для проверок
   private checkLength(metrics: any, issues: string[]): void {
     if (metrics.charCount < this.minChars) {
       issues.push(
         `❌ Текст короткий: ${metrics.charCount} символов (нужно ${this.minChars}-${this.maxChars})`
-      )
+      );
     } else if (metrics.charCount > this.maxChars) {
       issues.push(
         `❌ Текст длинный: ${metrics.charCount} символов (максимум ${this.maxChars})`
-      )
+      );
     }
   }
   
@@ -272,7 +284,7 @@ export class ContentValidator {
     if (metrics.keywordsUsed < this.minKeywordsUsed) {
       issues.push(
         `❌ Мало ключей: ${metrics.keywordsUsed} из ${totalKeywords} (минимум ${this.minKeywordsUsed})`
-      )
+      );
     }
   }
   
@@ -280,50 +292,57 @@ export class ContentValidator {
     if (metrics.keywordDensity < this.minDensity) {
       issues.push(
         `⚠️ Низкая плотность: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`
-      )
+      );
     } else if (metrics.keywordDensity > this.maxDensity) {
       issues.push(
         `⚠️ Высокая плотность: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`
-      )
+      );
     }
   }
   
   private checkReadabilityIssues(readability: any, issues: string[]): void {
     if (readability.avgSentenceLength > 25) {
-      issues.push("⚠️ Слишком длинные предложения (среднее > 25 слов)")
+      issues.push("⚠️ Слишком длинные предложения (среднее > 25 слов)");
     }
     
     if (readability.complexWordsRatio > 15) {
-      issues.push("⚠️ Много сложных слов (> 15%), текст трудночитаем")
+      issues.push("⚠️ Много сложных слов (> 15%), текст трудночитаем");
     }
   }
   
   private checkSemanticIssues(semantic: any, issues: string[]): void {
     if (semantic.keywordStuffingDetected) {
-      issues.push("⚠️ Обнаружен переспам ключевыми словами")
+      issues.push("⚠️ Обнаружен переспам ключевыми словами");
     }
     
     if (semantic.lowCoherenceScore) {
-      issues.push("⚠️ Низкая связность текста между абзацами")
+      issues.push("⚠️ Низкая связность текста между абзацами");
     }
     
     if (semantic.adClichesCount > 3) {
-      issues.push("⚠️ Много рекламных штампов, текст выглядит навязчиво")
+      issues.push("⚠️ Много рекламных штампов, текст выглядит навязчиво");
     }
   }
-  //added by cursor missing method for checking readability
+
   private checkReadability(content: string): ReadabilityMetrics {
-    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0)
-    const words = content.split(/\s+/).filter(w => w.length > 0)
-    const complexWords = words.filter(w => w.length > 6).length
-    const longWords = words.filter(w => w.length > 8).length
-    const uniqueWords = new Set(words.map(w => w.toLowerCase())).size
+    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const words = content.split(/\s+/).filter(w => w.length > 0);
+    
+    if (sentences.length === 0 || words.length === 0) {
+        return {
+            avgSentenceLength: 0, maxSentenceLength: 0, complexWordsRatio: 0,
+            longWordsRatio: 0, totalSentences: 0, fleschRuScore: 0, lexicalDiversity: 0
+        };
+    }
 
-    const sentenceLengths = sentences.map(s => s.split(/\s+/).length)
-    const maxSentenceLength = Math.max(...sentenceLengths)
+    const complexWords = words.filter(w => w.length > 6).length;
+    const longWords = words.filter(w => w.length > 8).length;
+    const uniqueWords = new Set(words.map(w => w.toLowerCase())).size;
 
-    // Calculate Flesch-Kincaid score for Russian text
-    const fleschRuScore = 206.835 - 1.015 * (words.length / sentences.length) - 84.6 * (complexWords / words.length)
+    const sentenceLengths = sentences.map(s => s.split(/\s+/).length);
+    const maxSentenceLength = Math.max(...sentenceLengths);
+
+    const fleschRuScore = 206.835 - 1.015 * (words.length / sentences.length) - 84.6 * (complexWords / words.length);
 
     return {
       avgSentenceLength: words.length / sentences.length,
@@ -333,6 +352,6 @@ export class ContentValidator {
       totalSentences: sentences.length,
       fleschRuScore,
       lexicalDiversity: (uniqueWords / words.length) * 100
-    }
+    };
   }
 }

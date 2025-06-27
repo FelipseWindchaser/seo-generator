@@ -5,7 +5,7 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     // Приватные переменные (только сервер)
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+    geminiApiKey: process.env.GEMINI_API_KEY || "",
     // openaiApiKey: process.env.OPENAI_API_KEY || "",
     redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
 
