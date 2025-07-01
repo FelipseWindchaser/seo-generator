@@ -31,33 +31,46 @@
       </div>
 
       <!-- Метрики -->
-      <div class="bg-gray-50 rounded-lg p-4">
+      <div v-if="result" class="bg-gray-50 rounded-lg p-4">
         <h3 class="font-medium text-gray-900 mb-3">Метрики</h3>
         <div class="space-y-2">
           <div class="flex justify-between">
             <span class="text-gray-600">Символов:</span>
-            <!-- <span class="font-medium">{{ result.metrics.charCount }}</span> -->
+            <span class="font-medium">{{ result.metrics?.charCount }}</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-gray-600">Использовано ключей:</span>
-            <!-- <span class="font-medium">
-              {{ result.metrics.keywordsUsed }} из
-              {{ result.metrics.totalKeywords }}
-            </span> -->
+            <span class="text-gray-600"> Использовано ключей:</span>
+            <span class="font-medium">
+              {{ result.metrics?.keywordsUsed }} из
+              {{ result.metrics?.totalKeywords }}
+            </span>
           </div>
           <div class="flex justify-between">
             <span class="text-gray-600">Плотность ключей:</span>
-            <!-- <span class="font-medium"
-              >{{ result.metrics.keywordDensity }}%</span
-            > -->
+            <span class="font-medium"
+              >{{ result.metrics?.keywordDensity }}%</span
+            >
           </div>
           <div class="flex justify-between">
-            <span class="text-gray-600">Попыток генерации:</span>
+            <!-- <span class="text-gray-600">Попыток генерации:</span> -->
             <!-- <span class="font-medium">{{ result.attempts }}</span> -->
           </div>
         </div>
       </div>
 
+      <div
+        v-if="result && result.warnings && result.warnings.length > 0"
+        class="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
+      >
+        <h4 class="font-medium text-yellow-800 mb-2">
+          ⚠️ Замечания валидатора:
+        </h4>
+        <ul class="list-disc list-inside text-sm text-yellow-700 space-y-1">
+          <li v-for="(warning, index) in result.warnings" :key="index">
+            {{ warning }}
+          </li>
+        </ul>
+      </div>
       <!-- Контент -->
       <div class="bg-white border border-gray-200 rounded-lg p-6">
         <div class="prose max-w-none" v-html="formattedContent" />
@@ -78,19 +91,6 @@
           Создать новое описание
         </button>
       </div>
-
-      <!-- Предупреждения -->
-      <!-- <div
-        v-if="result.warnings && result.warnings.length > 0"
-        class="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
-      >
-        <h4 class="font-medium text-yellow-800 mb-2">⚠️ Внимание:</h4>
-        <ul class="list-disc list-inside text-sm text-yellow-700">
-          <li v-for="warning in result.warnings" :key="warning">
-            {{ warning }}
-          </li>
-        </ul>
-      </div> -->
     </div>
   </div>
 </template>
@@ -115,18 +115,18 @@ const copied = ref(false);
 // Проверка статуса
 const checkStatus = async () => {
   try {
-    const response = (await $fetch(`/api/status/${props.taskId}`)) as Task;
+    const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
     console.log(response);
 
     if (response.status === "completed") {
       status.value = "completed";
-      result.value = response?.result || null;
+      result.value = response.result || null;
     } else if (response.status === "error") {
       status.value = "error";
-      // error.value = response.error || "Неизвестная ошибка";
-      // } else if (response.status === "not_found") {
-      //   status.value = "error";
-      //   error.value = "Задача не найдена";
+      error.value = response.error || "Неизвестная ошибка";
+    } else if (response.status === "not_found") {
+      status.value = "error";
+      error.value = "Задача не найдена";
     }
     // Если processing - продолжаем проверку
   } catch (err) {

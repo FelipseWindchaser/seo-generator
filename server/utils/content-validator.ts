@@ -283,7 +283,7 @@ export class ContentValidator {
   private checkKeywordUsage(metrics: any, totalKeywords: number, issues: string[]): void {
     if (metrics.keywordsUsed < this.minKeywordsUsed) {
       issues.push(
-        `❌ Мало ключей: ${metrics.keywordsUsed} из ${totalKeywords} (минимум ${this.minKeywordsUsed}. Пропущенные ключи: ${metrics.missingKeywords.join(', ')})`
+        `❌ Мало ключей: ${metrics.keywordsUsed} из ${totalKeywords} (минимум ${this.minKeywordsUsed}. Пропущенные ключи: "${metrics.missingKeywords.join(', ')}")`
       );
     }
   }
@@ -291,11 +291,11 @@ export class ContentValidator {
   private checkDensity(metrics: any, issues: string[]): void {
     if (metrics.keywordDensity < this.minDensity) {
       issues.push(
-        `⚠️ Низкая плотность: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`
+        `⚠️ Низкая плотность ключевых слов: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`
       );
     } else if (metrics.keywordDensity > this.maxDensity) {
       issues.push(
-        `⚠️ Высокая плотность: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`
+        `⚠️ Высокая плотность ключевых слов: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`
       );
     }
   }
@@ -306,7 +306,7 @@ export class ContentValidator {
     }
     
     if (readability.complexWordsRatio > 15) {
-      issues.push("⚠️ Много сложных слов (> 15%), текст трудночитаем. Текущее значение: " + readability.complexWordsRatio + "%");
+      issues.push("⚠️ Много сложных слов (> 15%), текст трудночитаем. Текущее значение: " + readability.complexWordsRatio.toFixed(2) + "%");
     }
   }
   

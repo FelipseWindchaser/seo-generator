@@ -1,82 +1,8 @@
-// import type { Task } from "~/types";
-
-// export const repeatFunction = () => {
-//     const interval = 10000; 
-
-//     const execute = () => {
-//         processTask();
-//         setTimeout(execute, interval);
-//     }
-//     setTimeout(execute, interval);
-
-   
-// }
-
-// const processTask = async () => {
-//     console.log(`Вызов в ${new Date().toLocaleTimeString()}`);
-    
-//     const tasks:Task[] = await getProcessingTasks();
-//     for await (const task of tasks) {
-//         generateTextFromTask(task);
-//         // updateTask(task.id, { status: "completed" })
-//         // console.log('task', task);
-//         console.log(task.id, task.status, 'processTask: status updated');
-//         //update task
-
-//         //return results with new page
-//     }
-// }
-// //adsplanned and canchange visuals - ?
-// const generateTextFromTask = async (task: Task) => {
-//     console.log('generateTextFromTask', task);
-//     const body = {
-//         contents: [
-//           {
-//             parts: [
-//               {
-//                 text: `Сгенерируй текст для товара ${task.request?.productUrl} с ключевыми словами ${task.request?.keywords.join(', ')} с отзывами ${task.request?.reviews} и уникальными торговыми предложениями ${task.request?.usp}. Выведи в ответе ссылку на товар и опиши ее содержание.`
-//               }
-//             ]
-//           }
-//         ]
-//       }
-      
-//     const result = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyAFyS-OM-smmw1tBlcyQVMY0Qg7bqnTyNw', {
-//         method: 'POST',
-//         headers: {
-//           'Content-Type': 'application/json', // Указываем, что передаём JSON
-//         },
-//         body: JSON.stringify(body)
-//       })
-//         .then(response => {
-//           if (!response.ok) {
-//             throw new Error(`Ошибка HTTP: ${response.status}`);
-//           }
-          
-//           return response.json(); // Парсим JSON-ответ
-//         })
-//         .then(data => {
-
-//             // console.log('Ответ сервера:', data);
-        
-//             const text = data.candidates[0].content.parts[0].text;
-//             updateTask(task.id, { status: "completed", result: {
-//                 content: text,
-//                 title: '',
-//                 description: '',
-//                 success: true,
-//                 attempts: 0
-//             } })
-//             console.log('text', text);
-//             return data;
-//         })
-//         .catch(error => console.error('Ошибка:', error));
-// }
-
-
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from '@google/genai';
 import type { Task, GenerationRequest, GenerationResult, ValidationResult, KeywordDetail } from '~/types';
 import { ContentValidator } from '~/server/utils/content-validator';
+
+// --- ИНИЦИАЛИЗАЦИЯ ЗАВИСИМОСТЕЙ ---
 
 const { geminiApiKey } = useRuntimeConfig();
 console.log('geminiApiKey', geminiApiKey);
@@ -87,12 +13,13 @@ if (!geminiApiKey) {
 const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
 const validator = new ContentValidator();
 
+// --- ЛОГИКА ФОНОВОГО ПРОЦЕССА ---
+
 export const repeatFunction = () => {
-  const interval = 30000;
+  const interval = 10000; // 30 секунд
 
   const execute = () => {
     processTask();
-    
     setTimeout(execute, interval);
   };
   
@@ -136,65 +63,42 @@ const processTask = async () => {
   }
 };
 
+// --- ЛОГИКА ГЕНЕРАЦИИ И ВАЛИДАЦИИ (Упрощено до 1 попытки) ---
+
 async function runGenerationWithValidation(data: GenerationRequest): Promise<GenerationResult> {
-  const maxAttempts = 3;
-  let currentContent: string | null = null;
-  let currentTitle: string | null = null;
-  let validationResult: ValidationResult | null = null;
-  let additionalChecks: { issues: string[]; checks: any } | null = null;
+  console.log(`[Generator] Starting single generation attempt for product: ${data.productUrl}`);
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    console.log(`[Generator] Attempt ${attempt + 1}/${maxAttempts} for product: ${data.productUrl}`);
+  // Шаг 1: Первичная генерация
+  const { title: currentTitle, content: currentContent } = await generateInitial(data);
 
-    // Шаг 1: Генерация или исправление
-    if (attempt === 0) {
-      const generated = await generateInitial(data);
-      currentTitle = generated.title;
-      currentContent = generated.content;
-    } else if (currentTitle && currentContent && validationResult) {
-      const fixed = await fixContent(currentTitle, currentContent, validationResult, data);
-      currentContent = fixed.content;
-    } else {
-      throw new Error("Cannot fix content without initial generation or validation result.");
-    }
+  // Шаг 2: Валидация
+  const validationResult = await validator.validate(currentContent, data.keywords);
+  const additionalChecks = checkAdditionalRequirements(currentContent, data);
+  
+  const allIssues = [...validationResult.issues, ...additionalChecks.issues];
+  
+  // Шаг 3: Определение результата и его подготовка
+  const isSuccess = allIssues.length === 0;
 
-    // Шаг 2: Валидация
-    validationResult = await validator.validate(currentContent, data.keywords);
-    additionalChecks = checkAdditionalRequirements(currentContent, data);
-    
-    const allIssues = [...validationResult.issues, ...additionalChecks.issues];
-    
-    // Шаг 3: Проверка на успех
-    if (allIssues.length === 0) {
-      console.log(`[Generator] Validation successful on attempt ${attempt + 1}.`);
-      return prepareFinalResult(
-        currentTitle,
-        currentContent,
-        validationResult,
-        additionalChecks,
-        attempt + 1,
-        true
-      );
-    }
-    
-    console.warn(`[Generator] Validation failed on attempt ${attempt + 1} with issues:`, allIssues);
-    validationResult.issues = allIssues; // Обновляем список проблем для следующей итерации
+  if (isSuccess) {
+    console.log(`[Generator] Validation successful.`);
+  } else {
+    console.warn(`[Generator] Validation failed with issues:`, allIssues);
   }
   
-  // Если вышли из цикла, значит, все попытки исчерпаны
-  console.error(`[Generator] Failed to generate valid content after ${maxAttempts} attempts.`);
-  if (currentTitle && currentContent && validationResult && additionalChecks) {
-      return prepareFinalResult(
-          currentTitle,
-          currentContent,
-          validationResult,
-          additionalChecks,
-          maxAttempts,
-          false
-      );
-  }
+  // Обновляем issues в объекте validationResult для корректной передачи в prepareFinalResult
+  validationResult.issues = allIssues;
 
-  throw new Error("Generation failed catastrophically. Could not prepare final result.");
+  const finalResult = prepareFinalResult(
+    currentTitle,
+    currentContent,
+    validationResult,
+    additionalChecks,
+    1, // Количество попыток всегда 1
+    isSuccess
+  );
+
+  return finalResult;
 }
 
 
@@ -221,7 +125,6 @@ ${data.usp.map((u, i) => `${i + 1}. ${u}`).join('\n')}
 
   const fullPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
-  // const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", safetySettings });
   const result = await genAI.models.generateContent({
     model: "gemini-2.0-flash",
     contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
@@ -234,7 +137,7 @@ ${data.usp.map((u, i) => `${i + 1}. ${u}`).join('\n')}
         { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },],
     },
   });
-  // const result = await model.generateContent(fullPrompt);
+
   const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text;
   
   console.debug('[Generator] Initial response from LLM:', responseText);
@@ -242,7 +145,8 @@ ${data.usp.map((u, i) => `${i + 1}. ${u}`).join('\n')}
 }
 
 /**
- * Исправляет контент на основе замечаний валидатора.
+ * Эта функция больше не используется в текущей логике, но оставлена на случай,
+ * если вы захотите вернуть цикл исправлений в будущем.
  */
 async function fixContent(
   title: string,
@@ -250,11 +154,13 @@ async function fixContent(
   validation: ValidationResult,
   data: GenerationRequest
 ): Promise<{ title: string; content: string }> {
+  console.warn("[Generator] fixContent function was called, but it should be disabled in single-attempt mode.");
   const systemPrompt = `Ты - эксперт по доработке SEO-текстов для Wildberries. Исправь текст ТОЧНО по инструкциям, сохранив стиль и основную структуру. Не меняй то, что уже хорошо.`;
   const userPrompt = `Доработай описание, исправив ВСЕ проблемы:
 
 ИНСТРУКЦИИ ПО ИСПРАВЛЕНИЮ:
 ${validation.issues.map((inst, i) => `${i + 1}. ${inst}`).join('\n')}
+КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО: Итоговый текст должен быть СТРОГО в диапазоне 1800-2000 символов. Это самая главная задача. Добейся этого, даже если придется переписать целые абзацы.
 
 ТЕКУЩИЕ МЕТРИКИ:
 - Символов: ${validation.metrics.charCount} (нужно 1800-2000)
@@ -273,7 +179,6 @@ ${content}
 
   const fullPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
-  // const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", safetySettings });
   const result = await genAI.models.generateContent({
     model: "gemini-2.0-flash",
     contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
@@ -314,7 +219,6 @@ function parseLLMResponse(responseText: string): { title: string; content: strin
       }
   }
   
-  // Fallback, если LLM не вернула разделители
   if (!title || !description) {
       console.warn("[Parser] LLM response did not contain expected separators. Using fallback parsing.");
       const lines = responseText.trim().split('\n');
@@ -386,7 +290,6 @@ function findKeywordExample(content: string, keyword: string): string {
 }
 
 function checkAdditionalRequirements(content: string, data: GenerationRequest): { issues: string[]; checks: any } {
-  // TODO: Реализовать детальную логику проверок
   const issues: string[] = [];
   const checks = {
     boldKeywords: (content.match(/\*\*/g) || []).length / 2,
