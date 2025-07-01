@@ -305,8 +305,8 @@ export class ContentValidator {
       issues.push("⚠️ Слишком длинные предложения (среднее > 25 слов). Текущее значение: " + readability.avgSentenceLength + " слов");
     }
     
-    if (readability.complexWordsRatio > 15) {
-      issues.push("⚠️ Много сложных слов (> 15%), текст трудночитаем. Текущее значение: " + readability.complexWordsRatio.toFixed(2) + "%");
+    if (readability.complexWordsRatio > 20) {
+      issues.push("⚠️ Много сложных слов (> 20%), текст трудночитаем. Текущее значение: " + readability.complexWordsRatio.toFixed(2) + "%");
     }
   }
   
@@ -324,6 +324,36 @@ export class ContentValidator {
     }
   }
 
+  // private checkReadability(content: string): ReadabilityMetrics {
+  //   const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  //   const words = content.split(/\s+/).filter(w => w.length > 0);
+    
+  //   if (sentences.length === 0 || words.length === 0) {
+  //       return {
+  //           avgSentenceLength: 0, maxSentenceLength: 0, complexWordsRatio: 0,
+  //           longWordsRatio: 0, totalSentences: 0, fleschRuScore: 0, lexicalDiversity: 0
+  //       };
+  //   }
+
+  //   const complexWords = words.filter(w => w.length > 6).length;
+  //   const longWords = words.filter(w => w.length > 8).length;
+  //   const uniqueWords = new Set(words.map(w => w.toLowerCase())).size;
+
+  //   const sentenceLengths = sentences.map(s => s.split(/\s+/).length);
+  //   const maxSentenceLength = Math.max(...sentenceLengths);
+
+  //   const fleschRuScore = 206.835 - 1.015 * (words.length / sentences.length) - 84.6 * (complexWords / words.length);
+
+  //   return {
+  //     avgSentenceLength: words.length / sentences.length,
+  //     maxSentenceLength,
+  //     complexWordsRatio: (complexWords / words.length) * 100,
+  //     longWordsRatio: (longWords / words.length) * 100,
+  //     totalSentences: sentences.length,
+  //     fleschRuScore,
+  //     lexicalDiversity: (uniqueWords / words.length) * 100
+  //   };
+  // }
   private checkReadability(content: string): ReadabilityMetrics {
     const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0);
     const words = content.split(/\s+/).filter(w => w.length > 0);
@@ -335,7 +365,16 @@ export class ContentValidator {
         };
     }
 
-    const complexWords = words.filter(w => w.length > 6).length;
+    // --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ СЛОЖНЫХ СЛОВ ---
+    const countSyllables = (word: string): number => {
+      // Простой, но эффективный способ подсчета слогов по гласным
+      return word.toLowerCase().match(/[аеёиоуыэюя]/g)?.length || 0;
+    };
+    
+    // Сложное слово = 4 и более слогов
+    const complexWords = words.filter(w => countSyllables(w) >= 4).length;
+    // ---------------------------------------------
+
     const longWords = words.filter(w => w.length > 8).length;
     const uniqueWords = new Set(words.map(w => w.toLowerCase())).size;
 
@@ -344,14 +383,22 @@ export class ContentValidator {
 
     const fleschRuScore = 206.835 - 1.015 * (words.length / sentences.length) - 84.6 * (complexWords / words.length);
 
-    return {
+    const metrics = {
       avgSentenceLength: words.length / sentences.length,
       maxSentenceLength,
+      // Повышаем порог для сложных слов до более реалистичных 20%
       complexWordsRatio: (complexWords / words.length) * 100,
       longWordsRatio: (longWords / words.length) * 100,
       totalSentences: sentences.length,
       fleschRuScore,
       lexicalDiversity: (uniqueWords / words.length) * 100
     };
+
+    console.log("    [Validator] Readability Metrics:", {
+        avgSentenceLength: metrics.avgSentenceLength.toFixed(1),
+        complexWordsRatio: metrics.complexWordsRatio.toFixed(2) + '%'
+    });
+
+    return metrics;
   }
 }
