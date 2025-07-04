@@ -57,7 +57,7 @@
           </div>
         </div>
       </div>
-
+      <!-- Предупреждения валидатора -->
       <div
         v-if="result && result.warnings && result.warnings.length > 0"
         class="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
@@ -71,6 +71,57 @@
           </li>
         </ul>
       </div>
+      <!-- Ход автоматических правок -->
+      <div
+        v-if="
+          result &&
+          result.processingLog &&
+          (result.processingLog.added.length > 0 ||
+            result.processingLog.removed.length > 0)
+        "
+        class="bg-gray-50 rounded-lg p-4"
+      >
+        <h3 class="font-medium text-gray-900 mb-3">
+          Ход автоматических правок
+        </h3>
+        <div class="space-y-4 text-sm">
+          <!-- Блок добавленного текста -->
+          <div v-if="result.processingLog.added.length > 0">
+            <h4 class="font-medium text-green-700 mb-2">
+              ✅ Добавлено для увеличения объема:
+            </h4>
+            <div
+              v-for="(paragraph, index) in result.processingLog.added"
+              :key="`added-${index}`"
+              class="bg-green-100 border-l-4 border-green-500 text-green-800 p-3"
+            >
+              <p class="italic">{{ paragraph }}</p>
+            </div>
+          </div>
+
+          <!-- Блок удаленного текста -->
+          <div v-if="result.processingLog.removed.length > 0">
+            <h4 class="font-medium text-red-700 mb-2">
+              ❌ Удалено для сокращения объема:
+            </h4>
+            <div
+              v-for="(sentence, index) in result.processingLog.removed"
+              :key="`removed-${index}`"
+              class="bg-red-100 border-l-4 border-red-500 text-red-800 p-3"
+            >
+              <p class="italic line-through">{{ sentence }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else>
+        <p class="text-sm text-gray-600 italic">
+          Автоматические правки не потребовались, текст сгенерирован в пределах
+          заданных лимитов.
+        </p>
+      </div>
+
       <!-- Контент -->
       <div class="bg-white border border-gray-200 rounded-lg p-6">
         <div class="prose max-w-none" v-html="formattedContent" />
@@ -109,36 +160,47 @@ const emit = defineEmits<{
 // Состояние
 const status = ref<"processing" | "completed" | "error">("processing");
 const result = ref<GenerationResult | null>(null);
-const error = ref<string>("");
+const error = ref<string>(""); // Эта переменная будет хранить текст ошибки для отображения
 const copied = ref(false);
 
 // Проверка статуса
 const checkStatus = async () => {
   try {
+    // Получаем с API полный объект задачи
     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
-    console.log(response);
+    console.log("Status check response:", response);
 
     if (response.status === "completed") {
       status.value = "completed";
-      result.value = response.result || null;
+      result.value = response?.result || null;
+      // Дополнительная проверка на случай, если результат пустой
+      if (!result.value) {
+        status.value = "error";
+        error.value = "Задача завершена, но результат генерации отсутствует.";
+      }
     } else if (response.status === "error") {
       status.value = "error";
-      error.value = response.error || "Неизвестная ошибка";
-    } else if (response.status === "not_found") {
-      status.value = "error";
-      error.value = "Задача не найдена";
+      // --- КЛЮЧЕВАЯ ЛОГИКА ЗДЕСЬ ---
+      // Извлекаем сообщение об ошибке из поля result.content, как мы его сохранили на бэкенде.
+      // Добавляем запасной вариант, если result или content отсутствуют.
+      error.value =
+        response.result?.content || "Произошла неизвестная ошибка на сервере.";
+      console.log("Error:", error.value);
+      // -----------------------------
     }
-    // Если processing - продолжаем проверку
+    // Если статус 'processing', ничего не делаем, цикл продолжится
   } catch (err) {
     status.value = "error";
-    error.value = "Ошибка при проверке статуса";
+    // Эта ошибка срабатывает, если сам API-запрос не удался (например, 404 или 500)
+    error.value =
+      "Не удалось получить статус задачи. Возможно, проблема с сетью или сервером.";
+    console.error(err);
   }
 };
 
-// Форматирование контента (преобразование ** в <strong>)
+// Форматирование контента
 const formattedContent = computed(() => {
-  if (!result.value) return "";
-
+  if (!result.value?.content) return "";
   return result.value.content
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\n/g, "<br>");
@@ -146,10 +208,9 @@ const formattedContent = computed(() => {
 
 // Копирование в буфер обмена
 const copyToClipboard = async () => {
-  // if (!result.value) return;
-
+  if (!result.value?.content) return;
   try {
-    await navigator.clipboard.writeText(result.value?.content || "");
+    await navigator.clipboard.writeText(result.value.content);
     copied.value = true;
     setTimeout(() => {
       copied.value = false;
@@ -164,14 +225,13 @@ let intervalId: NodeJS.Timeout;
 
 onMounted(() => {
   checkStatus(); // Первая проверка сразу
-
   intervalId = setInterval(() => {
     if (status.value === "processing") {
       checkStatus();
     } else {
       clearInterval(intervalId);
     }
-  }, 2000); // Проверяем каждые 2 секунды
+  }, 2000);
 });
 
 onUnmounted(() => {

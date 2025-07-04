@@ -19,7 +19,7 @@ export interface ValidationMetrics {
   charDensity: number;
   keywordOccurrences: number;
   missingKeywords: string[];
-  keywordUsageDetails: Record<string, number>;
+  keywordUsageDetails: Record<string, { count: number }>;
   keywordPositions: {
     beginning: number;
     middle: number;
@@ -49,6 +49,7 @@ export interface ValidationResult {
 export interface SemanticMetrics {
   keywordStuffingDetected: boolean;
   lowCoherenceScore: boolean;
+  avgCoherence: number;
   adClichesCount: number;
   paragraphCount: number;
 }
@@ -67,6 +68,10 @@ export interface GenerationResult {
   };
   attempts: number;
   warnings?: string[];
+  processingLog?: {
+    added: string[];
+    removed: string[];
+  };
 }
 
 export interface KeywordDetail {
