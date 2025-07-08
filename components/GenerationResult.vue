@@ -75,29 +75,46 @@
         <div class="prose max-w-none" v-html="formattedContent" />
       </div>
 
-      <!-- НОВЫЙ БЛОК: УЛУЧШИТЬ РЕЗУЛЬТАТ -->
+      <!-- Блок Улучшения и Сохранения -->
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h3 class="font-medium text-gray-900 mb-3">Улучшить результат</h3>
+        <h3 class="font-medium text-gray-900 mb-3">Улучшить или Сохранить</h3>
         <p class="text-sm text-gray-600 mb-3">
-          Не понравился результат? Опишите, что нужно изменить, и ИИ перепишет
-          текст, сохранив SEO-требования.
+          Вы можете внести правки с помощью ИИ или сохранить текущий результат,
+          даже если он не прошел валидацию.
         </p>
         <textarea
           v-model="refinementPrompt"
           rows="3"
-          class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-          placeholder="Например: Сделай текст более официальным. Добавь абзац про пользу для здоровья. Убери предложение про гарантию."
+          class="w-full p-2 border border-gray-300 rounded-md"
+          placeholder="Например: Сделай текст более официальным..."
         ></textarea>
-        <button
-          @click="handleRefinement"
-          :disabled="isRefining || !refinementPrompt.trim()"
-          class="mt-3 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center"
-        >
-          <LoadingSpinner v-if="isRefining" class="mr-2" :size="20" />
-          {{ isRefining ? "Улучшаем..." : "🚀 Улучшить" }}
-        </button>
+
+        <!-- КНОПКИ УЛУЧШЕНИЯ И СОХРАНЕНИЯ ТЕПЕРЬ ВСЕГДА ВИДНЫ ВМЕСТЕ -->
+        <div class="mt-3 flex flex-col sm:flex-row gap-2">
+          <button
+            @click="handleRefinement"
+            :disabled="isRefining || !refinementPrompt.trim()"
+            class="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center"
+          >
+            <LoadingSpinner v-if="isRefining" class="mr-2" :size="20" />
+            {{ isRefining ? "Улучшаем..." : "🚀 Улучшить по промпту" }}
+          </button>
+
+          <button
+            @click="handleSave"
+            :disabled="isSaving"
+            class="flex-1 px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:bg-gray-400 flex items-center justify-center"
+          >
+            <LoadingSpinner v-if="isSaving" class="mr-2" :size="20" />
+            {{ isSaving ? "Сохраняем..." : "💾 Сохранить текущий результат" }}
+          </button>
+        </div>
+
         <p v-if="refinementError" class="text-sm text-red-600 mt-2">
           {{ refinementError }}
+        </p>
+        <p v-if="saveSuccessMessage" class="text-sm text-green-600 mt-2">
+          {{ saveSuccessMessage }}
         </p>
       </div>
 
@@ -142,6 +159,10 @@ const copied = ref(false);
 const refinementPrompt = ref("");
 const isRefining = ref(false);
 const refinementError = ref("");
+
+// const hasBeenRefined = ref(false);
+const isSaving = ref(false);
+const saveSuccessMessage = ref("");
 
 // Проверка статуса
 const checkStatus = async () => {
@@ -245,6 +266,34 @@ const handleRefinement = async () => {
     refinementError.value = err.data?.message || "Не удалось улучшить текст.";
   } finally {
     isRefining.value = false;
+  }
+};
+
+// НОВАЯ ФУНКЦИЯ: Сохранение результата
+const handleSave = async () => {
+  if (!result.value) return;
+
+  isSaving.value = true;
+  saveSuccessMessage.value = "";
+  refinementError.value = "";
+
+  try {
+    await $fetch(`/api/tasks/${props.taskId}`, {
+      method: "PUT",
+      body: {
+        result: result.value, // Отправляем весь текущий объект результата
+      },
+    });
+
+    saveSuccessMessage.value = "✅ Результат успешно сохранен!";
+    // hasBeenRefined.value = false; // Сбрасываем флаг, так как текущее состояние сохранено
+    setTimeout(() => (saveSuccessMessage.value = ""), 3000); // Убираем сообщение через 3 сек
+  } catch (err: any) {
+    console.error("Save failed:", err);
+    refinementError.value =
+      err.data?.message || "Не удалось сохранить результат.";
+  } finally {
+    isSaving.value = false;
   }
 };
 

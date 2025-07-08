@@ -62,9 +62,9 @@ export interface GenerationResult {
   metrics?: ValidationMetrics & {
     keywordDetails: KeywordDetail[];
     boldKeywordsCount: number;
-    utpCovered: number;
-    painPointsAddressed: number;
-    trustTriggers: number;
+    utpCovered?: number;
+    painPointsAddressed?: number;
+    trustTriggers?: number;
   };
   attempts: number;
   warnings?: string[];

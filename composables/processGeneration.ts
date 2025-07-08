@@ -3,7 +3,6 @@
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from '@google/genai';
 import type { Task, GenerationRequest, GenerationResult, ValidationResult, KeywordDetail } from '~/types';
 import { ContentValidator } from '~/server/utils/content-validator';
-import { createHash } from 'crypto';
 
 // --- ИНИЦИАЛИЗАЦИЯ ---
 const { geminiApiKey } = useRuntimeConfig();
