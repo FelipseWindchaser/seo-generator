@@ -70,11 +70,6 @@
         </ul>
       </div>
 
-      <!-- Контент -->
-      <div class="bg-white border border-gray-200 rounded-lg p-6">
-        <div class="prose max-w-none" v-html="formattedContent" />
-      </div>
-
       <!-- Блок Улучшения и Сохранения -->
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <h3 class="font-medium text-gray-900 mb-3">Улучшить или Сохранить</h3>
@@ -89,7 +84,6 @@
           placeholder="Например: Сделай текст более официальным..."
         ></textarea>
 
-        <!-- КНОПКИ УЛУЧШЕНИЯ И СОХРАНЕНИЯ ТЕПЕРЬ ВСЕГДА ВИДНЫ ВМЕСТЕ -->
         <div class="mt-3 flex flex-col sm:flex-row gap-2">
           <button
             @click="handleRefinement"
@@ -116,6 +110,11 @@
         <p v-if="saveSuccessMessage" class="text-sm text-green-600 mt-2">
           {{ saveSuccessMessage }}
         </p>
+      </div>
+
+      <!-- Контент -->
+      <div class="bg-white border border-gray-200 rounded-lg p-6">
+        <div class="prose max-w-none" v-html="formattedContent" />
       </div>
 
       <!-- Кнопки действий -->
