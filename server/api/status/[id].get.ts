@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
 
   if (!task) {
     return {
-      status: "not_found",
+      status: "404",
       message: "Задача не найдена",
     };
   }
@@ -24,6 +24,7 @@ export default defineEventHandler(async (event) => {
       status: "completed",
       message: "Задача выполнена",
       result: task.result,
+      request: task.request,
       generatedAt: task.completedAt,
       task: task,
     };
@@ -33,6 +34,12 @@ export default defineEventHandler(async (event) => {
     return {
       status: "error",
       error: task.error || "Unknown error",
+      result:
+      {
+        content: task.error || "Unknown error",
+        success: false,
+      },
+      request: task.request,
     };
   }
 
@@ -40,6 +47,8 @@ export default defineEventHandler(async (event) => {
     status: "processing",
     message: "Ещё генерируется...",
     task: task,
+    result: task.result,
+    request: task.request,
   };
 });
 

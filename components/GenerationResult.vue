@@ -1,3 +1,4 @@
+<!-- /components/GenerationResult.vue -->
 <template>
   <div>
     <!-- Загрузка -->
@@ -23,7 +24,7 @@
     </div>
 
     <!-- Результат -->
-    <div v-else-if="status === 'completed'" class="space-y-6">
+    <div v-else-if="status === 'completed' && result" class="space-y-6">
       <div class="bg-green-50 border border-green-200 rounded-lg p-4">
         <h2 class="text-xl font-semibold text-green-800 mb-2">
           ✅ Описание готово!
@@ -31,35 +32,32 @@
       </div>
 
       <!-- Метрики -->
-      <div v-if="result" class="bg-gray-50 rounded-lg p-4">
+      <div class="bg-gray-50 rounded-lg p-4">
         <h3 class="font-medium text-gray-900 mb-3">Метрики</h3>
         <div class="space-y-2">
           <div class="flex justify-between">
-            <span class="text-gray-600">Символов:</span>
-            <span class="font-medium">{{ result.metrics?.charCount }}</span>
+            <span class="text-gray-600">Символов:</span
+            ><span class="font-medium">{{ result.metrics?.charCount }}</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-gray-600"> Использовано ключей:</span>
-            <span class="font-medium">
-              {{ result.metrics?.keywordsUsed }} из
-              {{ result.metrics?.totalKeywords }}
-            </span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-gray-600">Плотность ключей:</span>
-            <span class="font-medium"
-              >{{ result.metrics?.keywordDensity }}%</span
+            <span class="text-gray-600">Использовано ключей:</span
+            ><span class="font-medium"
+              >{{ result.metrics?.keywordsUsed }} из
+              {{ result.metrics?.totalKeywords }}</span
             >
           </div>
           <div class="flex justify-between">
-            <!-- <span class="text-gray-600">Попыток генерации:</span> -->
-            <!-- <span class="font-medium">{{ result.attempts }}</span> -->
+            <span class="text-gray-600">Плотность ключей:</span
+            ><span class="font-medium"
+              >{{ result.metrics?.keywordDensity }}%</span
+            >
           </div>
         </div>
       </div>
+
       <!-- Предупреждения валидатора -->
       <div
-        v-if="result && result.warnings && result.warnings.length > 0"
+        v-if="result.warnings && result.warnings.length > 0"
         class="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
       >
         <h4 class="font-medium text-yellow-800 mb-2">
@@ -71,60 +69,36 @@
           </li>
         </ul>
       </div>
-      <!-- Ход автоматических правок -->
-      <div
-        v-if="
-          result &&
-          result.processingLog &&
-          (result.processingLog.added.length > 0 ||
-            result.processingLog.removed.length > 0)
-        "
-        class="bg-gray-50 rounded-lg p-4"
-      >
-        <h3 class="font-medium text-gray-900 mb-3">
-          Ход автоматических правок
-        </h3>
-        <div class="space-y-4 text-sm">
-          <!-- Блок добавленного текста -->
-          <div v-if="result.processingLog.added.length > 0">
-            <h4 class="font-medium text-green-700 mb-2">
-              ✅ Добавлено для увеличения объема:
-            </h4>
-            <div
-              v-for="(paragraph, index) in result.processingLog.added"
-              :key="`added-${index}`"
-              class="bg-green-100 border-l-4 border-green-500 text-green-800 p-3"
-            >
-              <p class="italic">{{ paragraph }}</p>
-            </div>
-          </div>
-
-          <!-- Блок удаленного текста -->
-          <div v-if="result.processingLog.removed.length > 0">
-            <h4 class="font-medium text-red-700 mb-2">
-              ❌ Удалено для сокращения объема:
-            </h4>
-            <div
-              v-for="(sentence, index) in result.processingLog.removed"
-              :key="`removed-${index}`"
-              class="bg-red-100 border-l-4 border-red-500 text-red-800 p-3"
-            >
-              <p class="italic line-through">{{ sentence }}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else>
-        <p class="text-sm text-gray-600 italic">
-          Автоматические правки не потребовались, текст сгенерирован в пределах
-          заданных лимитов.
-        </p>
-      </div>
 
       <!-- Контент -->
       <div class="bg-white border border-gray-200 rounded-lg p-6">
         <div class="prose max-w-none" v-html="formattedContent" />
+      </div>
+
+      <!-- НОВЫЙ БЛОК: УЛУЧШИТЬ РЕЗУЛЬТАТ -->
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 class="font-medium text-gray-900 mb-3">Улучшить результат</h3>
+        <p class="text-sm text-gray-600 mb-3">
+          Не понравился результат? Опишите, что нужно изменить, и ИИ перепишет
+          текст, сохранив SEO-требования.
+        </p>
+        <textarea
+          v-model="refinementPrompt"
+          rows="3"
+          class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+          placeholder="Например: Сделай текст более официальным. Добавь абзац про пользу для здоровья. Убери предложение про гарантию."
+        ></textarea>
+        <button
+          @click="handleRefinement"
+          :disabled="isRefining || !refinementPrompt.trim()"
+          class="mt-3 w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center"
+        >
+          <LoadingSpinner v-if="isRefining" class="mr-2" :size="20" />
+          {{ isRefining ? "Улучшаем..." : "🚀 Улучшить" }}
+        </button>
+        <p v-if="refinementError" class="text-sm text-red-600 mt-2">
+          {{ refinementError }}
+        </p>
       </div>
 
       <!-- Кнопки действий -->
@@ -147,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import type { GenerationResult, Task } from "~/types";
+import type { GenerationResult, GenerationRequest } from "~/types";
 
 const props = defineProps<{
   taskId: string;
@@ -160,41 +134,117 @@ const emit = defineEmits<{
 // Состояние
 const status = ref<"processing" | "completed" | "error">("processing");
 const result = ref<GenerationResult | null>(null);
-const error = ref<string>(""); // Эта переменная будет хранить текст ошибки для отображения
+const originalRequest = ref<GenerationRequest | null>(null); // Храним исходный запрос
+const error = ref<string>("");
 const copied = ref(false);
+
+// Состояние для блока улучшения
+const refinementPrompt = ref("");
+const isRefining = ref(false);
+const refinementError = ref("");
 
 // Проверка статуса
 const checkStatus = async () => {
   try {
-    // Получаем с API полный объект задачи
     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
-    console.log("Status check response:", response);
+
+    // --- DEBUG LOG ---
+    console.log("[checkStatus] Received status response:", response);
 
     if (response.status === "completed") {
       status.value = "completed";
       result.value = response?.result || null;
-      // Дополнительная проверка на случай, если результат пустой
+      // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
+      // Сохраняем исходный запрос из ответа API
+      originalRequest.value = response?.request || null;
+
+      // --- DEBUG LOG ---
+      console.log(
+        "[checkStatus] Task completed. Result populated:",
+        !!result.value
+      );
+      console.log(
+        "[checkStatus] Original request populated:",
+        !!originalRequest.value,
+        originalRequest.value
+      );
+
       if (!result.value) {
         status.value = "error";
         error.value = "Задача завершена, но результат генерации отсутствует.";
       }
     } else if (response.status === "error") {
       status.value = "error";
-      // --- КЛЮЧЕВАЯ ЛОГИКА ЗДЕСЬ ---
-      // Извлекаем сообщение об ошибке из поля result.content, как мы его сохранили на бэкенде.
-      // Добавляем запасной вариант, если result или content отсутствуют.
       error.value =
         response.result?.content || "Произошла неизвестная ошибка на сервере.";
-      console.log("Error:", error.value);
-      // -----------------------------
     }
-    // Если статус 'processing', ничего не делаем, цикл продолжится
   } catch (err) {
     status.value = "error";
-    // Эта ошибка срабатывает, если сам API-запрос не удался (например, 404 или 500)
     error.value =
       "Не удалось получить статус задачи. Возможно, проблема с сетью или сервером.";
     console.error(err);
+  }
+};
+
+// Обработка запроса на улучшение
+const handleRefinement = async () => {
+  // --- DEBUG LOG ---
+  console.log("--- [handleRefinement] CLICKED ---");
+  console.log("Checking guard conditions...");
+  console.log(
+    `1. Refinement Prompt Present:`,
+    !!refinementPrompt.value.trim(),
+    `(Value: "${refinementPrompt.value}")`
+  );
+  console.log(
+    `2. Result Description Present:`,
+    !!result.value?.description,
+    `(Value: "${result.value?.description?.substring(0, 30)}...")`
+  );
+  console.log(
+    `3. Original Request Present:`,
+    !!originalRequest.value,
+    `(Value:`,
+    originalRequest.value,
+    `)`
+  );
+
+  if (
+    !refinementPrompt.value.trim() ||
+    !result.value?.description ||
+    !originalRequest.value
+  ) {
+    console.error("[handleRefinement] Guard condition FAILED. Aborting.");
+    refinementError.value =
+      "Не все данные для улучшения готовы. Попробуйте обновить страницу.";
+    return;
+  }
+
+  isRefining.value = true;
+  refinementError.value = "";
+
+  const payload = {
+    originalContent: result.value.description,
+    userPrompt: refinementPrompt.value,
+    generationData: originalRequest.value,
+  };
+
+  console.log("[handleRefinement] Payload to be sent:", payload);
+
+  try {
+    const newResult = await $fetch<GenerationResult>("/api/refine", {
+      method: "POST",
+      body: payload,
+    });
+
+    console.log("[handleRefinement] SUCCESS. Received new result:", newResult);
+    result.value = newResult;
+    refinementPrompt.value = "";
+  } catch (err: any) {
+    console.error("[handleRefinement] FAILED. API call error:", err);
+    refinementError.value = err.data?.message || "Не удалось улучшить текст.";
+  } finally {
+    isRefining.value = false;
   }
 };
 
@@ -220,9 +270,8 @@ const copyToClipboard = async () => {
   }
 };
 
-// Периодическая проверка статуса
+// Хуки жизненного цикла
 let intervalId: NodeJS.Timeout;
-
 onMounted(() => {
   checkStatus(); // Первая проверка сразу
   intervalId = setInterval(() => {
