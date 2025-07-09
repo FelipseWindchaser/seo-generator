@@ -1,91 +1,138 @@
-import type { ValidationResult, GenerationRequest, ValidationMetrics, SemanticMetrics, ReadabilityMetrics } from '~/types'
+import type { ValidationResult, GenerationRequest, ValidationMetrics, SemanticMetrics, ReadabilityMetrics, KeywordInstruction } from '~/types'
 import { morphologyService } from './morphology-service'
 import type { TextAnalysis } from '~/types/morphology'
 import { findKeywordsAdvanced } from './keyword-finder'
 
+// НОВАЯ вспомогательная функция для точного подсчета
+function countOccurrences(text: string, sub: string): number {
+  if (sub.length === 0) return 0;
+  
+  // Приводим все к нижнему регистру для регистронезависимого поиска
+  const textLower = text.toLowerCase();
+  const subLower = sub.toLowerCase();
+  
+  let count = 0;
+  let pos = textLower.indexOf(subLower, 0);
+  
+  while (pos !== -1) {
+    count++;
+    pos = textLower.indexOf(subLower, pos + 1);
+  }
+  
+  return count;
+}
+// function countOccurrences(text: string, sub: string): number {
+//   if (sub.length === 0) return 0;
+//   const escapedSub = sub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+//   const regex = new RegExp(`\\b${escapedSub}\\b`, 'gi'); // Ищем как целое слово/фразу
+//   return (text.match(regex) || []).length;
+// }
+
 export class ContentValidator {
   private readonly minChars = 1800
   private readonly maxChars = 2000
-  private readonly minDensity = 3.0
-  private readonly maxDensity = 5.0
-  private readonly minKeywordsUsed = 10
   
-  async validate(content: string, keywords: string[]): Promise<ValidationResult> {
+  async validate(
+    content: string, 
+    primaryInstructions: KeywordInstruction[], 
+    secondaryKeywords: string[]
+  ): Promise<ValidationResult> {
     console.log(`\n--- [Validator] START validation for content (${content.length} chars) ---`);
     
-    // Вычисляем метрики с помощью нового, надежного метода
-    const metrics = await this.calculateMetrics(content, keywords);
-    
-    // Остальная логика валидации остается прежней, но теперь она работает с корректными данными
-    const textAnalysis = { wordCount: metrics.wordCount }; // Заглушка, если textAnalysis нужен где-то еще
-    const readability = this.checkReadability(content);
-    // Semantic analysis может потребовать `textAnalysis`, его нужно будет получить отдельно, если он нужен
-    // const semantic = await this.semanticAnalysis(content, keywords, textAnalysis);
-    
     const issues: string[] = [];
+    const allKeywords = [...primaryInstructions.map(i => i.keyword), ...secondaryKeywords];
+
+    // ШАГ 1: ДЕЛАЕМ ОДИН "УМНЫЙ" ВЫЗОВ К МОРФОЛОГИЧЕСКОМУ СЕРВИСУ
+    // max_distance=5 означает, что слова во фразе могут быть на расстоянии до 5 других слов друг от друга.
+    console.log('[Validator] Calling advanced keyword search...');
+    const searchResult = await morphologyService.findKeywordsAdvanced(content, allKeywords, 5);
+    console.log('[Validator] Advanced search result:', searchResult);
+
+    // ШАГ 2: ПРОВЕРЯЕМ КРИТИЧНЫЕ ПРАВИЛА, ИСПОЛЬЗУЯ РЕЗУЛЬТАТЫ "УМНОГО" ПОИСКА
+    this.checkLength({ charCount: content.length }, issues);
+    this.checkKeywordUsage(searchResult.details, primaryInstructions, secondaryKeywords, issues);
     
-    this.checkLength(metrics, issues);
-    this.checkKeywordUsage(metrics, keywords.length, issues);
-    this.checkDensity(metrics, issues);
-    this.checkReadabilityIssues(readability, issues);
-    // this.checkSemanticIssues(semantic, issues);
-    
+    // ШАГ 3: СОБИРАЕМ ВСЕ МЕТРИКИ ДЛЯ ОТЧЕТА (также на основе умного поиска)
+    const metrics = this.calculateMetrics(content, allKeywords, searchResult);
+    const readability = this.checkReadability(content);
+    // Семантический анализ можно будет улучшить позже, пока оставим заглушку
+    const semantic = {} as SemanticMetrics; 
+
     const finalResult: ValidationResult = {
-      isValid: issues.length === 0,
-      metrics: { ...metrics, readability, semantic: {} as SemanticMetrics }, // Добавляем заглушку для semantic
+      isValid: issues.filter(issue => issue.startsWith('❌')).length === 0,
+      metrics: { ...metrics, readability, semantic },
       issues
     };
 
-    console.log("  [Validator] Final Validation Result:", JSON.stringify(finalResult, null, 2));
     console.log("--- [Validator] END validation ---\n");
-
     return finalResult;
   }
 
-  private async calculateMetrics(content: string, keywords: string[]): Promise<ValidationMetrics> {
-    console.log("  [Validator] Step 1: Calculating Metrics using Advanced Keyword Finder");
-    
-    // Один вызов к нашему новому умному поисковику
-    const searchResult = await findKeywordsAdvanced(content, keywords, 5);
-    
+  private checkKeywordUsage(
+    foundDetails: Record<string, { count: number }>, 
+    primaryInstructions: KeywordInstruction[], 
+    secondaryKeywords: string[], 
+    issues: string[]
+  ): void {
+    // Проверка основных ключей
+    primaryInstructions.forEach(instr => {
+      const foundCount = foundDetails[instr.keyword]?.count || 0;
+      if (foundCount < instr.count) { // Используем "меньше", а не "не равно" для гибкости
+        issues.push(`❌ Основной ключ "${instr.keyword}" найден ${foundCount} раз(а), ожидалось ${instr.count}.`);
+      }
+    });
+
+    // Проверка дополнительных ключей
+    secondaryKeywords.forEach(keyword => {
+      const foundCount = foundDetails[keyword]?.count || 0;
+      if (foundCount < 1) {
+        issues.push(`❌ Отсутствует дополнительный ключ: "${keyword}".`);
+      }
+    });
+  }
+
+  private calculateMetrics(
+    content: string, 
+    allKeywords: string[],
+    searchResult: { found_keywords: string[], details: Record<string, { count: number }> }
+  ): ValidationMetrics {
     const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
     const totalOccurrences = Object.values(searchResult.details).reduce((sum, current) => sum + current.count, 0);
     const keywordDensity = wordCount > 0 ? (totalOccurrences / wordCount * 100) : 0;
     
     const foundKeywords = searchResult.found_keywords;
-    const missingKeywords = keywords.filter(k => !foundKeywords.includes(k));
+    const missingKeywords = allKeywords.filter(k => !foundKeywords.includes(k));
     
-    const metrics: ValidationMetrics = {
+    return {
       charCount: content.length,
       charCountNoSpaces: content.replace(/\s/g, '').length,
       wordCount,
       keywordsFound: foundKeywords,
       keywordsUsed: foundKeywords.length,
-      totalKeywords: keywords.length,
+      totalKeywords: allKeywords.length,
       keywordDensity: Math.round(keywordDensity * 100) / 100,
       charDensity: 0, 
       keywordOccurrences: totalOccurrences,
       missingKeywords,
       keywordUsageDetails: searchResult.details,
-      keywordPositions: this.analyzeKeywordPositions(content, searchResult.details) // Теперь эта функция тоже будет работать с правильными данными
+      
+      // ИСПРАВЛЕНО: Возвращаем объект-заглушку с правильной структурой,
+      // чтобы он соответствовал Zod-схеме.
+      keywordPositions: {
+        beginning: 0,
+        middle: 0,
+        end: 0,
+      }
     };
-
-    console.log("    [Validator] Calculated Metrics:", metrics);
-    return metrics;
   }
   
-  // ... (остальные функции валидатора без изменений)
+  // ... остальные функции (analyzeKeywordPositions, semanticAnalysis, checkLength и т.д.) без изменений ...
   private analyzeKeywordPositions(content: string, keywordUsageDetails: Record<string, { count: number }>): { beginning: number; middle: number; end: number } {
     const textLength = content.length;
     const positions = { beginning: 0, middle: 0, end: 0 };
     const contentLower = content.toLowerCase();
-
-    // Эта функция все еще использует regex, что не идеально, но для распределения уже найденных ключей может быть приемлемо.
-    // Для 100% точности ее тоже нужно было бы переписать с использованием лемм.
-    // Но для начала оставим так, так как основная проблема решена.
     for (const keyword of Object.keys(keywordUsageDetails)) {
         const firstWord = keyword.split(' ')[0];
-        // Ищем по первому слову ключа, чтобы примерно определить позицию
         const regex = new RegExp(this.escapeRegex(firstWord), 'gi');
         let match;
         while ((match = regex.exec(contentLower)) !== null) {
@@ -151,17 +198,6 @@ export class ContentValidator {
   private checkLength(metrics: any, issues: string[]): void {
     if (metrics.charCount < this.minChars) issues.push(`❌ Текст короткий: ${metrics.charCount} символов (нужно ${this.minChars}-${this.maxChars})`);
     else if (metrics.charCount > this.maxChars) issues.push(`❌ Текст длинный: ${metrics.charCount} символов (максимум ${this.maxChars})`);
-  }
-
-  private checkKeywordUsage(metrics: any, totalKeywords: number, issues: string[]): void {
-    if (metrics.keywordsUsed < totalKeywords) {
-      issues.push(`❌ Мало ключей: ${metrics.keywordsUsed} из ${totalKeywords} (минимум ${totalKeywords}. Пропущенные ключи: "${metrics.missingKeywords.join(', ')}")`);
-    }
-  }
-
-  private checkDensity(metrics: any, issues: string[]): void {
-    if (metrics.keywordDensity < this.minDensity) issues.push(`⚠️ Низкая плотность ключевых слов: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`);
-    else if (metrics.keywordDensity > this.maxDensity) issues.push(`⚠️ Высокая плотность ключевых слов: ${metrics.keywordDensity}% (нужно ${this.minDensity}-${this.maxDensity}%)`);
   }
 
   private checkReadabilityIssues(readability: any, issues: string[]): void {

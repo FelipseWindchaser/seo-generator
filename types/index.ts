@@ -1,7 +1,16 @@
 // Основные типы данных
+/**
+ * @description Новый тип для передачи конкретных инструкций по количеству использований
+ * ключевого слова. Используется для передачи рассчитанных данных в генератор промптов и валидатор.
+ */
+export interface KeywordInstruction {
+  keyword: string;
+  count: number;
+}
 export interface GenerationRequest {
   productUrl: string;
-  keywords: string[];
+  primaryKeywords: string[];
+  secondaryKeywords: string[];
   reviews: string;
   usp: string[];
   adsPlanned: boolean;

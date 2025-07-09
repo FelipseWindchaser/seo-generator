@@ -210,59 +210,73 @@ const checkStatus = async () => {
 const handleRefinement = async () => {
   // --- DEBUG LOG ---
   console.log("--- [handleRefinement] CLICKED ---");
-  console.log("Checking guard conditions...");
-  console.log(
-    `1. Refinement Prompt Present:`,
-    !!refinementPrompt.value.trim(),
-    `(Value: "${refinementPrompt.value}")`
-  );
-  console.log(
-    `2. Result Description Present:`,
-    !!result.value?.description,
-    `(Value: "${result.value?.description?.substring(0, 30)}...")`
-  );
-  console.log(
-    `3. Original Request Present:`,
-    !!originalRequest.value,
-    `(Value:`,
-    originalRequest.value,
-    `)`
-  );
 
+  // 1. Проверка наличия всех необходимых данных
   if (
     !refinementPrompt.value.trim() ||
     !result.value?.description ||
     !originalRequest.value
   ) {
-    console.error("[handleRefinement] Guard condition FAILED. Aborting.");
-    refinementError.value =
+    const errorMessage =
       "Не все данные для улучшения готовы. Попробуйте обновить страницу.";
+    console.error("[handleRefinement] Guard condition FAILED. Aborting.", {
+      prompt: !!refinementPrompt.value.trim(),
+      description: !!result.value?.description,
+      request: !!originalRequest.value,
+    });
+    refinementError.value = errorMessage;
     return;
   }
 
   isRefining.value = true;
   refinementError.value = "";
 
+  // 2. Формирование тела запроса (payload). Этот код уже правильный.
   const payload = {
     originalContent: result.value.description,
     userPrompt: refinementPrompt.value,
-    generationData: originalRequest.value,
+    data: originalRequest.value,
+    originalTitle: result.value.title,
   };
 
   console.log("[handleRefinement] Payload to be sent:", payload);
 
   try {
+    // 3. ИСПРАВЛЕНО: Ожидаем от API полноценный объект GenerationResult
     const newResult = await $fetch<GenerationResult>("/api/refine", {
       method: "POST",
       body: payload,
     });
 
-    console.log("[handleRefinement] SUCCESS. Received new result:", newResult);
+    console.log(
+      "[handleRefinement] SUCCESS. Received new full result:",
+      newResult
+    );
+
+    // 4. ИСПРАВЛЕНО: Полностью заменяем старый результат новым.
+    // Это гарантирует, что все поля (включая вложенные метрики) будут корректными.
     result.value = newResult;
-    refinementPrompt.value = "";
+
+    refinementPrompt.value = ""; // Очищаем поле ввода после успеха
   } catch (err: any) {
-    console.error("[handleRefinement] FAILED. API call error:", err);
-    refinementError.value = err.data?.message || "Не удалось улучшить текст.";
+    // 5. ИСПРАВЛЕНО: Улучшенная обработка ошибок
+    console.error("[handleRefinement] FAILED. API call error object:", err);
+
+    // Сначала пытаемся достать сообщение из данных ошибки, если они есть
+    if (err.data && err.data.message) {
+      refinementError.value = `Ошибка сервера: ${err.data.message}`;
+    }
+    // Если данных нет, но есть статусное сообщение от h3/ofetch
+    else if (err.statusMessage) {
+      refinementError.value = `Ошибка сервера (${err.statusCode || ""}): ${
+        err.statusMessage
+      }`;
+    }
+    // Самый крайний случай (например, CORS или проблемы с сетью)
+    else {
+      refinementError.value =
+        "Произошла неизвестная ошибка при связи с сервером.";
+    }
   } finally {
     isRefining.value = false;
   }

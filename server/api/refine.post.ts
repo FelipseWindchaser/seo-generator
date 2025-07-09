@@ -1,113 +1,72 @@
-import { runUserRefinement } from "~/composables/processGeneration";
-import { ContentValidator } from "~/server/utils/content-validator";
-import type {
-  GenerationRequest,
-  GenerationResult,
-  KeywordDetail,
-} from "~/types";
+// /server/api/refine.post.ts
 
-function prepareFinalResult(
-  title: string,
-  content: string,
-  validation: any,
-  additionalChecks: any,
-  attempts: number,
-  success: boolean
-): GenerationResult {
-  const keywordDetails: KeywordDetail[] = [];
-  const keywordUsage = validation.metrics.keywordUsageDetails || {};
+import { z } from 'zod';
+import { defineEventHandler, readValidatedBody, createError } from 'h3';
+import { ContentValidator } from '~/server/utils/content-validator';
+// ИМПОРТИРУЕМ ВСЕ НЕОБХОДИМЫЕ ФУНКЦИИ
+import { runUserRefinement, prepareFinalResult, findKeywordExample, calculateKeywordInstructions, checkAdditionalRequirements } from '~/composables/processGeneration';
+import type { GenerationRequest, GenerationResult, KeywordInstruction } from '~/types';
 
-  for (const [keyword, details] of Object.entries(keywordUsage)) {
-    // @ts-ignore
-    const count = details.count || 0;
-    // findKeywordExample здесь недоступен, можно либо передавать, либо опустить для этого ответа
-    keywordDetails.push({
-      keyword,
-      count,
-      example: "Пример недоступен после улучшения",
-    });
-  }
+// --- Схемы валидации (остаются без изменений) ---
+const generationRequestSchema = z.object({
+  productUrl: z.string().url(),
+  primaryKeywords: z.array(z.string()).min(1).max(3),
+  secondaryKeywords: z.array(z.string()),
+  reviews: z.string(),
+  usp: z.array(z.string()),
+  adsPlanned: z.boolean(),
+  canChangeVisuals: z.boolean(),
+}).superRefine((data, ctx) => {
+    if (data.primaryKeywords.length + data.secondaryKeywords.length < 10) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "В сумме должно быть не менее 10 ключей", path: ["secondaryKeywords"] });
+    }
+});
 
-  const finalContent = `**${title}**\n\n${content}`;
+const refineBodySchema = z.object({
+  originalTitle: z.string().min(1),
+  originalContent: z.string().min(1),
+  userPrompt: z.string().min(1),
+  data: generationRequestSchema,
+});
 
-  const result: GenerationResult = {
-    success,
-    content: finalContent,
-    title,
-    description: content,
-    metrics: {
-      ...validation.metrics,
-      keywordDetails,
-      boldKeywordsCount: additionalChecks.checks.boldKeywords,
-    },
-    attempts,
-    processingLog: { added: [], removed: [] }, // Правки были ручные
-  };
+// --- Инициализация ---
+const validator = new ContentValidator();
 
-  if (!success) {
-    result.warnings = validation.issues;
-  }
-  return result;
-}
-
+// --- Обработчик API (полностью переписан) ---
 export default defineEventHandler(async (event) => {
-  // --- DEBUG LOG ---
-  console.log("--- [/api/refine] Received request ---");
-  const body = await readBody(event);
-  // --- DEBUG LOG ---
-  console.log("[/api/refine] Request body:", body);
-  const { originalContent, userPrompt, generationData } = body as {
-    originalContent: string;
-    userPrompt: string;
-    generationData: GenerationRequest;
-  };
+  try {
+    // 1. Валидируем входящее тело запроса
+    const body = await readValidatedBody(event, (rawBody) => refineBodySchema.parse(rawBody));
+    const { originalTitle, originalContent, userPrompt, data } = body;
 
-  if (!originalContent || !userPrompt || !generationData) {
-    // --- DEBUG LOG ---
-    console.error("[/api/refine] Validation FAILED. Missing required fields.");
-    throw createError({
-      statusCode: 400,
-      statusMessage: "Missing required fields for refinement.",
-    });
+    // 2. Вызываем LLM для рефакторинга текста
+    const refinedContent = await runUserRefinement(originalContent, userPrompt, data);
+
+    // 3. Повторно валидируем новый текст, чтобы получить свежие метрики
+    const primaryInstructions = calculateKeywordInstructions(data.primaryKeywords);
+    const validationResult = await validator.validate(refinedContent, primaryInstructions, data.secondaryKeywords);
+
+    // 4. Собираем дополнительные метрики (например, количество жирных слов)
+    const additionalChecks = checkAdditionalRequirements(refinedContent, data);
+
+    // 5. ИСПОЛЬЗУЕМ prepareFinalResult для сборки ПОЛНОЦЕННОГО объекта GenerationResult
+    const finalResult: GenerationResult = prepareFinalResult(
+      originalTitle, // Заголовок можно взять из data или поставить заглушку
+      refinedContent,
+      validationResult,
+      additionalChecks,
+      -1, // Используем -1 или другое специальное значение для "попыток", чтобы обозначить доработку
+      validationResult.isValid
+    );
+
+    // 6. Возвращаем клиенту полный и валидный объект
+    return finalResult;
+
+  } catch (error: any) {
+    console.error(`[API /refine] Error:`, error);
+    if (error.name === 'ZodError') {
+      throw createError({ statusCode: 400, statusMessage: 'Validation error', data: error.errors });
+    }
+    throw createError({ statusCode: 500, statusMessage: 'Internal Server Error', data: { message: error.message } });
   }
-
-  // 1. Выполняем улучшение
-   // --- DEBUG LOG ---
-   console.log("[/api/refine] Calling runUserRefinement...");
-  const refinedContent = await runUserRefinement(
-    originalContent,
-    userPrompt,
-    generationData
-  );
-
-  // 2. Снова валидируем результат, чтобы пользователь видел актуальные метрики
-   // --- DEBUG LOG ---
-   console.log("[/api/refine] Calling validator...")
-  const validator = new ContentValidator();
-  const validationResult = await validator.validate(
-    refinedContent,
-    generationData.keywords
-  );
-
-  // 3. Готовим и возвращаем новый объект GenerationResult
-  const isSuccess = validationResult.isValid;
-  const title = "Улучшенный результат"; // Заголовок можно оставить старым или обновить
-
-  // checkAdditionalRequirements здесь недоступен, можно передать заглушку
-  const additionalChecks = {
-    issues: [],
-    checks: { boldKeywords: (refinedContent.match(/\*\*/g) || []).length / 2 },
-  };
-
-  const finalResult = prepareFinalResult(
-    title,
-    refinedContent,
-    validationResult,
-    additionalChecks,
-    (body.attempts || 2) + 1, // Увеличиваем счетчик попыток
-    isSuccess
-  );
-  
-  console.log("[/api/refine] Sending final response.");
-  return finalResult;
 });

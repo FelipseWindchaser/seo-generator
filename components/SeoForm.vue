@@ -18,22 +18,47 @@
         Скопируйте полную ссылку на товар
       </p>
     </div>
-
-    <!-- Ключевые фразы -->
+    <!-- ИЗМЕНЕНО: Разделение ключевых слов -->
     <div>
-      <label for="keywords" class="block text-sm font-medium text-gray-700">
-        Ключевые фразы (минимум 10) *
+      <label
+        for="primaryKeywords"
+        class="block text-sm font-medium text-gray-700"
+      >
+        Основные ключевые фразы (1-3 шт.) *
       </label>
       <textarea
-        id="keywords"
-        v-model="keywordsText"
+        id="primaryKeywords"
+        v-model="primaryKeywordsText"
         required
-        rows="6"
-        placeholder="платье женское летнее&#10;платье в пол&#10;платье на выпускной"
+        rows="3"
+        placeholder="умный чайник купить
+чайник с подсветкой"
         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
       />
       <p class="mt-1 text-sm text-gray-500">
-        Каждая фраза с новой строки. Введено: {{ keywordsCount }}/10
+        Самые важные ключи для набора плотности. Введено:
+        {{ primaryKeywordsCount }}
+      </p>
+    </div>
+
+    <div>
+      <label
+        for="secondaryKeywords"
+        class="block text-sm font-medium text-gray-700"
+      >
+        Дополнительные ключевые фразы (минимум 7) *
+      </label>
+      <textarea
+        id="secondaryKeywords"
+        v-model="secondaryKeywordsText"
+        required
+        rows="5"
+        placeholder="электрический чайник стеклянный
+чайник с терморегулятором недорого"
+        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+      />
+      <p class="mt-1 text-sm text-gray-500">
+        Используются по 1 разу для охвата. Введено: {{ secondaryKeywordsCount }}
       </p>
     </div>
 
@@ -115,9 +140,6 @@
 
 <script setup lang="ts">
 import type { GenerationRequest } from "~/types";
-import { useSeoGenerator } from "~/composables/useSeoGenerator";
-const router = useRouter();
-const taskId = ref<string>("");
 const props = defineProps<{
   loading: boolean;
 }>();
@@ -134,17 +156,24 @@ const form = reactive({
   canChangeVisuals: false,
 });
 
-const keywordsText = ref("");
+const primaryKeywordsText = ref("");
+const secondaryKeywordsText = ref("");
 const uspText = ref("");
 
 // Вычисляемые свойства
-const keywords = computed(() =>
-  keywordsText.value
+// ИЗМЕНЕНО: Вычисляемые свойства для каждого списка ключей
+const primaryKeywords = computed(() =>
+  primaryKeywordsText.value
     .split("\n")
     .map((k) => k.trim())
     .filter((k) => k.length > 0)
 );
-
+const secondaryKeywords = computed(() =>
+  secondaryKeywordsText.value
+    .split("\n")
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0)
+);
 const usp = computed(() =>
   uspText.value
     .split("\n")
@@ -152,33 +181,30 @@ const usp = computed(() =>
     .filter((u) => u.length > 0)
 );
 
-const keywordsCount = computed(() => keywords.value.length);
+const primaryKeywordsCount = computed(() => primaryKeywords.value.length);
+const secondaryKeywordsCount = computed(() => secondaryKeywords.value.length);
+const totalKeywordsCount = computed(
+  () => primaryKeywordsCount.value + secondaryKeywordsCount.value
+);
+
 const uspCount = computed(() => usp.value.length);
 
 // Валидация
 const errors = ref<string[]>([]);
-
 const isValid = computed(() => {
   const errs: string[] = [];
-
-  if (!form.productUrl.includes("wildberries.ru/catalog/")) {
+  if (!form.productUrl.includes("wildberries.ru/catalog/"))
     errs.push("URL должен быть с Wildberries");
-  }
-
-  if (keywordsCount.value < 10) {
+  if (primaryKeywordsCount.value < 1 || primaryKeywordsCount.value > 3)
     errs.push(
-      `Нужно минимум 10 ключевых фраз (сейчас: ${keywordsCount.value})`
+      `Нужно от 1 до 3 основных ключей (сейчас: ${primaryKeywordsCount.value})`
     );
-  }
-
-  if (uspCount.value < 2) {
-    errs.push(`Нужно минимум 2 УТП (сейчас: ${uspCount.value})`);
-  }
-
-  if (!form.reviews || form.reviews.length < 20) {
+  if (totalKeywordsCount.value < 10)
+    errs.push(
+      `Нужно минимум 10 ключей в сумме (сейчас: ${totalKeywordsCount.value})`
+    );
+  if (!form.reviews || form.reviews.length < 20)
     errs.push("Добавьте отзывы конкурентов");
-  }
-
   errors.value = errs;
   return errs.length === 0;
 });
@@ -186,13 +212,12 @@ const isValid = computed(() => {
 // Отправка формы
 const onSubmit = () => {
   if (!isValid.value) return;
-
   const data: GenerationRequest = {
     ...form,
-    keywords: keywords.value,
+    primaryKeywords: primaryKeywords.value,
+    secondaryKeywords: secondaryKeywords.value,
     usp: usp.value,
   };
-  // router.push(`/tasks/${taskId.value}`);
   emit("submit", data);
 };
 </script>
