@@ -1,5 +1,3 @@
-// /server/composables/processGeneration.ts
-
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import type {
   Task,
@@ -149,6 +147,7 @@ ${originalContent}
       model: "gemini-2.0-flash",
       contents: [{ role: "user", parts: [{ text: userPromptForLLM }] }],
       config: {
+        tools: [{urlContext: {}}],
         temperature: 0.3,
         maxOutputTokens: 1024,
         systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -212,6 +211,7 @@ async function generateBaseContent(data: GenerationRequest): Promise<{ title: st
     model: "gemini-2.0-flash",
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],
     config: {
+      tools: [{urlContext: {}}],
       temperature: 0.7,
       maxOutputTokens: 850,
       safetySettings: [
@@ -251,6 +251,7 @@ ${baseContent}
     model: "gemini-2.0-flash",
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],
     config: {
+      tools: [{urlContext: {}}],
       temperature: 0.4,
       maxOutputTokens: 1024,
       safetySettings: [

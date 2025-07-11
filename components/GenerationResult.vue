@@ -285,21 +285,29 @@ const handleRefinement = async () => {
   isRefining.value = true;
   refinementError.value = "";
   saveSuccessMessage.value = "";
+  const payload = {
+    productName: originalRequest.value.productName,
+    originalContent: result.value.description,
+    userPrompt: refinementPrompt.value,
+    generationData: originalRequest.value,
+    originalTitle: result.value.title,
+  };
 
+  // --- ДИАГНОСТИЧЕСКИЙ ЛОГ ---
+  console.log(
+    "Sending this payload to /api/refine:",
+    JSON.stringify(payload, null, 2)
+  );
   try {
     const newResult = await $fetch<GenerationResult>("/api/refine", {
       method: "POST",
-      body: {
-        originalContent: result.value.description,
-        userPrompt: refinementPrompt.value,
-        generationData: originalRequest.value,
-        originalTitle: result.value.title,
-      },
+      body: payload,
     });
     result.value = newResult;
     refinementPrompt.value = "";
   } catch (err: any) {
     refinementError.value = err.data?.message || "Не удалось улучшить текст.";
+    console.error("Validation error details from server:", err.data);
   } finally {
     isRefining.value = false;
   }

@@ -1,5 +1,3 @@
-// /server/utils/content-validator/index.ts
-
 import type { ValidationResult, ValidationMetrics, SemanticMetrics, ReadabilityMetrics, KeywordInstruction } from '~/types'
 import { morphologyService } from './morphology-service'
 
@@ -105,8 +103,8 @@ export class ContentValidator {
   }
 
   private checkReadabilityIssues(readability: ReadabilityMetrics, issues: string[]): void {
-    if (readability.avgSentenceLength > 18) issues.push(`⚠️ Слишком длинные предложения (среднее > 18 слов).`);
-    if (readability.complexWordsRatio > 30) issues.push(`⚠️ Много сложных слов (> 30%).`);
+    if (readability.avgSentenceLength > 18) issues.push(`⚠️ Слишком длинные предложения: ${readability.avgSentenceLength.toFixed(2)} слов (среднее > 18 слов).`);
+    if (readability.complexWordsRatio > 30) issues.push(`⚠️ Много сложных слов: ${readability.complexWordsRatio.toFixed(2)}% (Нужно > 30%).`);
   }
 
   private checkReadability(content: string): ReadabilityMetrics {

@@ -16,7 +16,8 @@ export interface KeywordInstruction {
  * ИСПОЛЬЗУЕТ НОВУЮ СТРУКТУРУ КЛЮЧЕЙ.
  */
 export interface GenerationRequest {
-  productUrl: string;
+  productName: string;
+  productUrl?: string;
   requiredKeywords: string[]; // 10 обязательных ключей
   optionalKeywords: string[]; // до 10 необязательных
   reviews: string;

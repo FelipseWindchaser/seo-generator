@@ -7,6 +7,7 @@ import { z } from "zod";
 // --- ИСПРАВЛЕННАЯ СХЕМА ВАЛИДАЦИИ ---
 // Адаптирована под requiredKeywords и optionalKeywords
 const requestSchema = z.object({
+  productName: z.string().min(1),
   productUrl: z
     .string()
     .url({ message: "Требуется корректный URL товара" })

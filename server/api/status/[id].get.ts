@@ -1,4 +1,6 @@
-import { getTask,  } from "~/server/utils/redis";
+// /server/api/status/[id].get.ts
+
+import { getTask } from "~/server/utils/redis";
 
 export default defineEventHandler(async (event) => {
   const taskId = getRouterParam(event, "id");
@@ -12,43 +14,21 @@ export default defineEventHandler(async (event) => {
 
   const task = await getTask(taskId);
 
+  // ИСПРАВЛЕНИЕ №1: Правильная обработка ошибки 404
   if (!task) {
-    return {
-      status: "404",
-      message: "Задача не найдена",
-    };
-  }
-  //if (task.status === "completed" && task.result) {
-  if (task.status === "completed") {
-    return {
-      status: "completed",
-      message: "Задача выполнена",
-      result: task.result,
-      request: task.request,
-      generatedAt: task.completedAt,
-      task: task,
-    };
+    // Выбрасываем настоящую HTTP-ошибку, которую поймает catch на фронтенде
+    throw createError({
+      statusCode: 404,
+      statusMessage: "Task not found",
+    });
   }
 
-  if (task.status === "error") {
-    return {
-      status: "error",
-      error: task.error || "Unknown error",
-      result:
-      {
-        content: task.error || "Unknown error",
-        success: false,
-      },
-      request: task.request,
-    };
-  }
-
+  // ИСПРАВЛЕНИЕ №2: Возвращаем ЕДИНУЮ и ЧИСТУЮ структуру ответа
+  // для всех успешных случаев (когда задача найдена).
+  // Фронтенд будет получать только то, что ему нужно.
   return {
-    status: "processing",
-    message: "Ещё генерируется...",
-    task: task,
-    result: task.result,
-    request: task.request,
+    status: task.status, // 'processing', 'completed', или 'error'
+    result: task.result || null, // Результат, если он есть, иначе null
+    request: task.request || null, // Запрос, если он есть, иначе null
   };
 });
-

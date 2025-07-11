@@ -3,13 +3,15 @@
 import { z } from 'zod';
 import { defineEventHandler, readBody, createError } from 'h3';
 import { ContentValidator } from '~/server/utils/content-validator';
-// ИЗМЕНЕНО: Убираем импорт удаленной функции calculateKeywordInstructions
 import { runUserRefinement, prepareFinalResult, checkAdditionalRequirements } from '~/composables/processGeneration';
 import type { GenerationRequest, GenerationResult } from '~/types';
 
-// --- Схемы валидации (соответствуют последней логике) ---
-const generationRequestSchema = z.object({
-  productUrl: z.string().url(),
+// Эта схема описывает объект, который мы СОХРАНИЛИ в Redis
+// и который приходит с фронтенда в поле `generationData`.
+// В нем НЕТ productName на верхнем уровне, он внутри.
+const generationRequestFromClientSchema = z.object({
+  productName: z.string().min(1),
+  productUrl: z.string().url().optional(),
   requiredKeywords: z.array(z.string()).length(10),
   optionalKeywords: z.array(z.string()).max(10),
   reviews: z.string(),
@@ -18,48 +20,43 @@ const generationRequestSchema = z.object({
   canChangeVisuals: z.boolean(),
 });
 
+// Эта схема описывает ВСЕ тело запроса на /api/refine
 const refineBodySchema = z.object({
   originalTitle: z.string().min(1),
   originalContent: z.string().min(1),
   userPrompt: z.string().min(1),
-  generationData: generationRequestSchema,
+  generationData: generationRequestFromClientSchema, // Используем схему выше
 });
 
-// --- Инициализация ---
 const validator = new ContentValidator();
 
-// --- Обработчик API ---
 export default defineEventHandler(async (event) => {
   try {
-    // 1. Валидируем входящее тело запроса
     const body = await readBody(event);
     const validatedBody = refineBodySchema.parse(body);
     const { originalTitle, originalContent, userPrompt, generationData } = validatedBody;
 
-    // 2. Вызываем LLM для рефакторинга текста
+    // Вызываем LLM для рефакторинга
     const refinedContent = await runUserRefinement(originalContent, userPrompt, generationData);
 
-    // 3. ИСПРАВЛЕНО: Повторно валидируем новый текст, передавая простые массивы ключей
+    // Валидируем результат
     const validationResult = await validator.validate(
       refinedContent, 
-      generationData.requiredKeywords, // <-- Передаем массив строк
-      generationData.optionalKeywords  // <-- Передаем массив строк
+      generationData.requiredKeywords,
+      generationData.optionalKeywords
     );
 
-    // 4. Собираем дополнительные метрики
     const additionalChecks = checkAdditionalRequirements(refinedContent, generationData);
 
-    // 5. Собираем полноценный объект GenerationResult
     const finalResult: GenerationResult = prepareFinalResult(
       originalTitle,
       refinedContent,
       validationResult,
       additionalChecks,
-      -1, // Специальное значение для "попыток", обозначающее доработку
+      -1,
       validationResult.isValid
     );
 
-    // 6. Возвращаем клиенту полный и валидный объект
     return finalResult;
 
   } catch (error: any) {
