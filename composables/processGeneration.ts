@@ -1,5 +1,3 @@
-// /server/composables/processGeneration.ts
-
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import type {
   Task,
@@ -11,14 +9,14 @@ import type {
 } from "~/types";
 import { ContentValidator } from "~/server/utils/content-validator";
 
-// --- ИНИЦИАЛИЗАЦИЯ ---
+
 const { geminiApiKey } = useRuntimeConfig();
 if (!geminiApiKey) throw new Error("GEMINI_API_KEY is not set");
 const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
 const validator = new ContentValidator();
 const MAX_CONTENT_LENGTH = 2000;
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (БЕЗ ИЗМЕНЕНИЙ) ---
+
 function escapeRegex(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -54,7 +52,7 @@ export function checkAdditionalRequirements(
   };
 }
 
-// --- ЛОГИКА ФОНОВОГО ПРОЦЕССА (БЕЗ ИЗМЕНЕНИЙ) ---
+
 export const repeatFunction = () => {
   const interval = 10000;
   const execute = () => {
@@ -64,11 +62,11 @@ export const repeatFunction = () => {
   setTimeout(execute, interval);
 };
 
-// --- ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ РУЧНОЙ КОРРЕКЦИИ ---
+
 export async function runUserRefinement(
   originalContent: string,
   userPrompt: string,
-  data: GenerationRequest // Этот объект уже содержит primaryKeywords и secondaryKeywords
+  data: GenerationRequest
 ): Promise<string> {
   console.log(
     "[Refiner] Starting user refinement step with new rule system..."
@@ -80,7 +78,7 @@ export async function runUserRefinement(
     data.primaryKeywords
   );
 
-  // ИСПРАВЛЕНО: Промпт теперь содержит все исходные правила, как при первой генерации
+
   const userPromptForLLM = `
 ЗАДАЧА: Аккуратно отредактируй ИСХОДНЫЙ ТЕКСТ в соответствии с ЗАПРОСОМ ПОЛЬЗОВАТЕЛЯ, при этом СТРОГО СОБЛЮДАЯ все КРИТИЧЕСКИЕ ПРАВИЛА.
 
@@ -117,7 +115,7 @@ ${data.secondaryKeywords.map((k) => `- "${k}" (должен быть 1 раз)`)
 
   try {
     const result = await genAI.models.generateContent({
-      model: "gemini-2.0-flash", // или более мощная модель для сложных правок
+      model: "gemini-2.0-flash",
       contents: [{ role: "user", parts: [{ text: userPromptForLLM }] }],
       config: {
         temperature: 0.3,
@@ -210,101 +208,63 @@ export function calculateKeywordInstructions(
 async function generateFinalText(
   data: GenerationRequest
 ): Promise<{ title: string; content: string }> {
-  // ИЗМЕНЕНО: Системный промпт теперь более сфокусирован
   const systemPrompt = `Ты — высокоточный SEO-копирайтер. Твоя главная задача — СТРОГО СЛЕДОВАТЬ ВСЕМ ПРАВИЛАМ И ОГРАНИЧЕНИЯМ, предоставленным пользователем. Несоблюдение правил недопустимо. Твоя цель — сгенерировать текст, который на 100% пройдет валидацию по заданным критериям.`;
 
   const primaryKeywordInstructions = calculateKeywordInstructions(
     data.primaryKeywords
   );
   const userPrompt = `
-  ВНИМАНИЕ: ТЫ ДОЛЖЕН СТРОГО СОБЛЮДАТЬ ВСЕ ПРАВИЛА.
+=== ВАЖНО ===
+Соблюдай ВСЕ ПРАВИЛА без исключений. Нарушение даже одного из них считается ошибкой.
 
---- ГЛАВНОЕ ПРАВИЛО: ОБЪЕМ ТЕКСТА ---
-Текст ОПИСАНИЯ должен быть объемом СТРОГО от 1800 до 2000 символов.
+=== ПРАВИЛО №1: ОБЪЕМ ===
+Напиши текст от 1800 до 2000 символов (включая пробелы). Не считай символы вручную — просто следи, чтобы он не был слишком коротким или слишком длинным. При необходимости сократи или дополни «водой», не затрагивая ключевые слова.
 
---- ПРАВИЛО №2: ИСПОЛЬЗОВАНИЕ КЛЮЧЕВЫХ СЛОВ ---
-Ты должен использовать все ключевые слова. МОЖНО ИЗМЕНЯТЬ ИХ ПАДЕЖ И ФОРМУ, чтобы они гармонично вписывались в текст.
+Структура:
+- Ровно **6 абзацев**
+- Каждый абзац по **2–4 предложения**
+- Предложения должны быть разной длины
 
-  2.1. ОСНОВНЫЕ КЛЮЧЕВЫЕ СЛОВА:
-  ${primaryKeywordInstructions
-    .map(
-      (instr) =>
-        `- Фраза "${instr.keyword}" должна встретиться в тексте не менее **${instr.count} раз(а)**.`
-    )
-    .join("\n")}
+=== ПРАВИЛО №2: КЛЮЧЕВЫЕ СЛОВА ===
+В тексте ОБЯЗАНЫ присутствовать все ключевые слова.
 
-  2.2. ДОПОЛНИТЕЛЬНЫЕ КЛЮЧЕВЫЕ СЛОВА:
-  Используй КАЖДУЮ из следующих фраз не менее **ОДНОГО раза**:
-  ${data.secondaryKeywords.map((k) => `- "${k}"`).join("\n")}
-  
-  --- ПРАВИЛО №3: СТИЛЬ ---
-  - Пиши "живым" языком, говори о пользе для клиента.
-  - Разбей текст на логические абзацы.
-  - НЕ начинай предложения с ключевых слов.
-  
-  --- ИСХОДНЫЕ ДАННЫЕ ДЛЯ ТЕКСТА ---
-  - URL товара: ${data.productUrl}
-  - Отзывы конкурентов (закрой эти боли и возражения):
-  ${data.reviews}
-  - УТП (раскрой все, говоря о выгоде для клиента):
-  ${data.usp.map((u, i) => `${i + 1}. ${u}`).join("\n")}
-  
-  --- ФОРМАТ ОТВЕТА (строго соблюдай) ---
-  ===ЗАГОЛОВОК===
-  [яркий, привлекательный заголовок до 60 символов]
-  ===ОПИСАНИЕ===
-  [готовый текст описания, соответствующий ВСЕМ правилам]
-  
-  === ПРОВЕРЬ СЕБЯ ПЕРЕД ВОЗВРАТОМ ===
-Проверь: 1) объем текста 1800–2000 символов; 2) все ключевые слова на месте в нужной плотности. Если есть отклонения — исправь перед возвратом результата.
-  `;
-  // ИЗМЕНЕНО: Промпт стал более директивным и структурированным
-  //   const userPrompt = `
-  // ЗАДАЧА: Напиши единый, цельный, убедительный и стилистически грамотный текст для товара, СТРОГО СОБЛЮДАЯ ВСЕ ПРАВИЛА НИЖЕ.
+**Основные ключевые фразы** (в нужной плотности):
+${primaryKeywordInstructions
+  .map((instr) => `- "${instr.keyword}" — не менее ${instr.count} раз`).join("\n")}
 
-  // --- КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА ---
+**Дополнительные ключи** (каждый — ровно 1 раз):
+${data.secondaryKeywords.map((k) => `- "${k}"`).join("\n")}
 
-  // ПРАВИЛО №1: ОБЪЕМ ТЕКСТА
-  // Итоговый текст ОПИСАНИЯ должен быть объемом СТРОГО от 1800 до 2000 символов. Это самое важное правило. Не генерируй текст короче 1800 или длиннее 2000 символов.
+Можно изменять падежи и формы, но нельзя убирать фразы полностью.
 
-  // ПРАВИЛО №2: ИСПОЛЬЗОВАНИЕ КЛЮЧЕВЫХ СЛОВ
-  // Ты должен использовать ключевые слова ТОЧНО так, как указано. Это означает ДОСЛОВНО, БЕЗ ИЗМЕНЕНИЯ ПАДЕЖЕЙ, СЛОВ ИЛИ ПОРЯДКА СЛОВ.
+=== ПРАВИЛО №3: СТИЛЬ ===
+- Пиши живым, убедительным языком
+- Используй простой и ясный стиль
+- НЕ начинай предложения с ключевых фраз
+- Показывай выгоды для клиента
+- Не повторяй одни и те же конструкции
 
-  //   2.1. ОСНОВНЫЕ КЛЮЧЕВЫЕ СЛОВА (для плотности):
-  //   Используй следующие фразы ТОЧНОЕ количество раз:
-  //   ${primaryKeywordInstructions
-  //     .map(
-  //       (instr) =>
-  //         `- Фраза "${instr.keyword}" должна встретиться в тексте ровно **${instr.count} раз(а)**.`
-  //     )
-  //     .join("\n")}
+=== ВХОДНЫЕ ДАННЫЕ ===
+- URL товара: ${data.productUrl}
+- Отзывы конкурентов (учти и закрой боли):
+${data.reviews}
+- Уникальные торговые предложения (раскрой их через пользу для клиента):
+${data.usp.map((u, i) => `${i + 1}. ${u}`).join("\n")}
 
-  //   2.2. ДОПОЛНИТЕЛЬНЫЕ КЛЮЧЕВЫЕ СЛОВА (для охвата):
-  //   Используй КАЖДУЮ из следующих фраз ровно **ОДИН раз**:
-  //   ${data.secondaryKeywords.map((k) => `- "${k}"`).join("\n")}
+=== ФОРМАТ ОТВЕТА ===
+===ЗАГОЛОВОК===
+[Краткий, привлекательный заголовок до 60 символов]
+===ОПИСАНИЕ===
+[Текст, строго соблюдающий ВСЕ правила]
 
-  // ПРАВИЛО №3: СТИЛЬ И ФОРМАТИРОВАНИЕ
-  // - Пиши "живым" языком, говори о пользе для клиента.
-  // - Разбей текст на логические абзацы.
-  // - НЕ начинай предложения с ключевых слов.
-  // - Важные для покупателя моменты (не обязательно ключи) выделяй жирным шрифтом (**вот так**).
-
-  // --- ИСХОДНЫЕ ДАННЫЕ ДЛЯ ТЕКСТА ---
-  // - URL товара: ${data.productUrl}
-  // - Отзывы конкурентов (закрой эти боли и возражения):
-  // ${data.reviews}
-  // - УТП (раскрой все, говоря о выгоде для клиента):
-  // ${data.usp.map((u, i) => `${i + 1}. ${u}`).join("\n")}
-  // - Реклама планируется: ${
-  //     data.adsPlanned ? "ДА - закончи текст сильным призывом к действию" : "НЕТ"
-  //   }
-
-  // --- ФОРМАТ ОТВЕТА (строго соблюдай) ---
-  // ===ЗАГОЛОВОК===
-  // [яркий, привлекательный заголовок до 60 символов]
-  // ===ОПИСАНИЕ===
-  // [готовый текст описания, соответствующий ВСЕМ правилам]
-  // `;
+=== ПРОВЕРКА ПЕРЕД ВОЗВРАТОМ ===
+Проверь: 
+1. Объем 1800–2000 символов
+2. Есть все ключевые слова с нужной частотой
+3. Ровно 6 абзацев
+4. Абзацы читаются естественно
+5. Стиль соответствует инструкциям
+`;
 
   const result = await genAI.models.generateContent({
     model: "gemini-2.0-flash",
@@ -363,7 +323,7 @@ async function generateFinalText(
   return { title, content: description };
 }
 
-// --- ФУНКЦИЯ КОРРЕКЦИИ (ПОПЫТКА 2) С ОПТИМИЗИРОВАННЫМ ПРОМПТОМ ---
+
 async function runCorrection(
   originalContent: string,
   issues: string[],
@@ -372,12 +332,14 @@ async function runCorrection(
   console.log("[Corrector] Starting correction step with optimized prompts...");
   const systemPrompt = `Ты — редактор-эксперт. Твоя задача — взять текст, список КОНКРЕТНЫХ ошибок и набор КОНКРЕТНЫХ правил, а затем аккуратно переписать текст, исправляя ТОЛЬКО указанные ошибки и не нарушая правил. Сохраняй стиль и смысл.`;
 
-  // ИЗМЕНЕНО: Передаем те же самые четкие инструкции и в корректор
+
   const primaryKeywordInstructions = calculateKeywordInstructions(
     data.primaryKeywords
   );
 
-  const userPrompt = `ИСПРАВЬ ЭТОТ ТЕКСТ:
+  const userPrompt = `
+=== ЗАДАЧА ===
+Перепиши ИСХОДНЫЙ ТЕКСТ, исправив ТОЛЬКО указанные ошибки. Не меняй остальное. Соблюдай правила и стиль.
 
 === ИСХОДНЫЙ ТЕКСТ ===
 ${originalContent}
@@ -385,24 +347,43 @@ ${originalContent}
 === КОНКРЕТНЫЕ ОШИБКИ, КОТОРЫЕ НУЖНО ИСПРАВИТЬ ===
 ${issues.join("\n")}
 
-=== КЛЮЧЕВЫЕ ПРАВИЛА, КОТОРЫЕ ДОЛЖНЫ СОБЛЮДАТЬСЯ В ИТОГОВОМ ТЕКСТЕ ===
-1.  **ОБЪЕМ:** СТРОГО от 1800 до 2000 символов. Если текст слишком короткий - дополни его, сохраняя смысл. Если слишком длинный - аккуратно сократи, не теряя ключевые фразы.
-2.  **ОСНОВНЫЕ КЛЮЧИ:**
-  ${primaryKeywordInstructions
-    .map(
-      (instr) =>
-        `- "${instr.keyword}": должно быть использовано **${instr.count} раз(а)**.`
-    )
-    .join("\n")}
-3.  **ДОПОЛНИТЕЛЬНЫЕ КЛЮЧИ:**
-  Каждая из этих фраз должна присутствовать в тексте **ровно 1 раз**:
-  ${data.secondaryKeywords.map((k) => `- "${k}"`).join("\n")}
+=== ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ===
 
-=== ЗАДАЧА ===
-Перепиши исходный текст, чтобы исправить ошибки и выполнить ВСЕ правила. Верни ТОЛЬКО исправленный текст описания без заголовков.
+1. **ОБЪЕМ**
+- Текст должен быть от 1800 до 2000 символов
+- Ровно 6 абзацев
+- Каждый абзац — 2–4 предложения
+- Естественный ритм и разнообразная длина предложений
+- При необходимости дополни или сократи "водой", не убирая ключей
 
-=== ПРОВЕРЬ СЕБЯ ПЕРЕД ВОЗВРАТОМ ===
-Проверь: 1) объем текста 1800–2000 символов; 2) все ключевые слова на месте в нужной плотности. Если есть отклонения — исправь перед возвратом результата.`;
+2. **КЛЮЧЕВЫЕ СЛОВА**
+
+**Основные ключи**:
+${primaryKeywordInstructions
+  .map((instr) => `- "${instr.keyword}" — не менее ${instr.count} раз`).join("\n")}
+
+**Дополнительные ключи**:
+${data.secondaryKeywords.map((k) => `- "${k}" — ровно 1 раз`).join("\n")}
+
+Разрешено менять падежи и формы.
+
+3. **СТИЛЬ**
+- Язык — живой и убедительный
+- Избегай сухих, канцелярских фраз
+- Не начинай предложения с ключей
+- Не повторяй одни и те же конструкции
+
+=== ВАЖНО ===
+Нельзя переписывать весь текст, если это не требуется. Правь только то, что указано в списке ошибок.
+
+=== ПРОВЕРКА ПЕРЕД ВОЗВРАТОМ ===
+Проверь:
+1. Объем в допустимых границах
+2. Все ключи присутствуют в нужной плотности
+3. Ровно 6 абзацев, 2–4 предложения каждый
+4. Текст читается естественно
+5. Стиль соответствует требованиям
+`;
 
   try {
     const result = await genAI.models.generateContent({
@@ -430,7 +411,7 @@ ${issues.join("\n")}
   }
 }
 
-// --- ОБНОВЛЕННАЯ ГЛАВНАЯ ЛОГИКА С ДВУХСТУПЕНЧАТЫМ КОНВЕЙЕРОМ (БЕЗ ИЗМЕНЕНИЙ) ---
+
 async function runGenerationWithValidation(
   data: GenerationRequest
 ): Promise<GenerationResult> {
@@ -498,8 +479,6 @@ async function runGenerationWithValidation(
   );
 }
 
-// --- ФУНКЦИЯ ПОДГОТОВКИ РЕЗУЛЬТАТА (БЕЗ ИЗМЕНЕНИЙ) ---
-// --- ФУНКЦИЯ ПОДГОТОВКИ РЕЗУЛЬТАТА (ИСПРАВЛЕНА) ---
 export function prepareFinalResult(
   title: string,
   content: string,
@@ -512,30 +491,28 @@ export function prepareFinalResult(
     removed: [],
   }
 ): GenerationResult {
-  // 1. Вычисляем keywordDetails, как и раньше
   const keywordDetails: KeywordDetail[] = [];
   const keywordUsage = validation.metrics.keywordUsageDetails || {};
 
   for (const [keyword, details] of Object.entries(keywordUsage)) {
-    // @ts-ignore
     const count = details.count || 0;
-    const example = findKeywordExample(content, keyword); // findKeywordExample должна быть доступна в этой области видимости
+    const example = findKeywordExample(content, keyword); 
     keywordDetails.push({ keyword, count, example });
   }
 
   const finalContent = `**${title}**\n\n${content}`;
 
-  // 2. ИСПРАВЛЕНО: Создаем объект GenerationResult с правильной структурой метрик
+
   const result: GenerationResult = {
     success,
     content: finalContent,
     title,
     description: content,
-    // Метрики теперь включают ВСЕ необходимые поля, как того требует Zod-схема
+    
     metrics: {
-      ...validation.metrics, // Сначала копируем все базовые метрики из валидатора
-      keywordDetails: keywordDetails, // Добавляем keywordDetails ВНУТРЬ metrics
-      boldKeywordsCount: additionalChecks.checks.boldKeywords, // Добавляем boldKeywordsCount ВНУТРЬ metrics
+      ...validation.metrics, 
+      keywordDetails: keywordDetails, 
+      boldKeywordsCount: additionalChecks.checks.boldKeywords, 
       utpCovered: additionalChecks.checks.utpCovered,
       painPointsAddressed: additionalChecks.checks.painPointsAddressed,
       trustTriggers: additionalChecks.checks.trustTriggers,

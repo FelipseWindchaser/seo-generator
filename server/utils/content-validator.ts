@@ -3,11 +3,11 @@ import { morphologyService } from './morphology-service'
 import type { TextAnalysis } from '~/types/morphology'
 import { findKeywordsAdvanced } from './keyword-finder'
 
-// НОВАЯ вспомогательная функция для точного подсчета
+
 function countOccurrences(text: string, sub: string): number {
   if (sub.length === 0) return 0;
   
-  // Приводим все к нижнему регистру для регистронезависимого поиска
+
   const textLower = text.toLowerCase();
   const subLower = sub.toLowerCase();
   
@@ -21,12 +21,7 @@ function countOccurrences(text: string, sub: string): number {
   
   return count;
 }
-// function countOccurrences(text: string, sub: string): number {
-//   if (sub.length === 0) return 0;
-//   const escapedSub = sub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-//   const regex = new RegExp(`\\b${escapedSub}\\b`, 'gi'); // Ищем как целое слово/фразу
-//   return (text.match(regex) || []).length;
-// }
+
 
 export class ContentValidator {
   private readonly minChars = 1800
@@ -42,20 +37,19 @@ export class ContentValidator {
     const issues: string[] = [];
     const allKeywords = [...primaryInstructions.map(i => i.keyword), ...secondaryKeywords];
 
-    // ШАГ 1: ДЕЛАЕМ ОДИН "УМНЫЙ" ВЫЗОВ К МОРФОЛОГИЧЕСКОМУ СЕРВИСУ
-    // max_distance=5 означает, что слова во фразе могут быть на расстоянии до 5 других слов друг от друга.
+    
     console.log('[Validator] Calling advanced keyword search...');
     const searchResult = await morphologyService.findKeywordsAdvanced(content, allKeywords, 5);
     console.log('[Validator] Advanced search result:', searchResult);
 
-    // ШАГ 2: ПРОВЕРЯЕМ КРИТИЧНЫЕ ПРАВИЛА, ИСПОЛЬЗУЯ РЕЗУЛЬТАТЫ "УМНОГО" ПОИСКА
+
     this.checkLength({ charCount: content.length }, issues);
     this.checkKeywordUsage(searchResult.details, primaryInstructions, secondaryKeywords, issues);
     
-    // ШАГ 3: СОБИРАЕМ ВСЕ МЕТРИКИ ДЛЯ ОТЧЕТА (также на основе умного поиска)
+    
     const metrics = this.calculateMetrics(content, allKeywords, searchResult);
     const readability = this.checkReadability(content);
-    // Семантический анализ можно будет улучшить позже, пока оставим заглушку
+    
     const semantic = {} as SemanticMetrics; 
 
     const finalResult: ValidationResult = {
@@ -74,15 +68,14 @@ export class ContentValidator {
     secondaryKeywords: string[], 
     issues: string[]
   ): void {
-    // Проверка основных ключей
+
     primaryInstructions.forEach(instr => {
       const foundCount = foundDetails[instr.keyword]?.count || 0;
-      if (foundCount < instr.count) { // Используем "меньше", а не "не равно" для гибкости
+      if (foundCount < instr.count) { 
         issues.push(`❌ Основной ключ "${instr.keyword}" найден ${foundCount} раз(а), ожидалось ${instr.count}.`);
       }
     });
 
-    // Проверка дополнительных ключей
     secondaryKeywords.forEach(keyword => {
       const foundCount = foundDetails[keyword]?.count || 0;
       if (foundCount < 1) {
@@ -115,9 +108,6 @@ export class ContentValidator {
       keywordOccurrences: totalOccurrences,
       missingKeywords,
       keywordUsageDetails: searchResult.details,
-      
-      // ИСПРАВЛЕНО: Возвращаем объект-заглушку с правильной структурой,
-      // чтобы он соответствовал Zod-схеме.
       keywordPositions: {
         beginning: 0,
         middle: 0,
@@ -126,7 +116,6 @@ export class ContentValidator {
     };
   }
   
-  // ... остальные функции (analyzeKeywordPositions, semanticAnalysis, checkLength и т.д.) без изменений ...
   private analyzeKeywordPositions(content: string, keywordUsageDetails: Record<string, { count: number }>): { beginning: number; middle: number; end: number } {
     const textLength = content.length;
     const positions = { beginning: 0, middle: 0, end: 0 };
