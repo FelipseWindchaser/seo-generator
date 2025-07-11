@@ -1,3 +1,5 @@
+// /server/composables/processGeneration.ts
+
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import type {
   Task,
@@ -5,18 +7,18 @@ import type {
   GenerationResult,
   ValidationResult,
   KeywordDetail,
-  KeywordInstruction,
 } from "~/types";
 import { ContentValidator } from "~/server/utils/content-validator";
+import { intelligentTruncate } from "~/server/utils/text-trimmer";
 
-
+// --- ИНИЦИАЛИЗАЦИЯ ---
 const { geminiApiKey } = useRuntimeConfig();
 if (!geminiApiKey) throw new Error("GEMINI_API_KEY is not set");
 const genAI = new GoogleGenAI({ apiKey: geminiApiKey });
 const validator = new ContentValidator();
 const MAX_CONTENT_LENGTH = 2000;
 
-
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 function escapeRegex(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -52,7 +54,7 @@ export function checkAdditionalRequirements(
   };
 }
 
-
+// --- ЛОГИКА ФОНОВОГО ПРОЦЕССА ---
 export const repeatFunction = () => {
   const interval = 10000;
   const execute = () => {
@@ -61,83 +63,6 @@ export const repeatFunction = () => {
   };
   setTimeout(execute, interval);
 };
-
-
-export async function runUserRefinement(
-  originalContent: string,
-  userPrompt: string,
-  data: GenerationRequest
-): Promise<string> {
-  console.log(
-    "[Refiner] Starting user refinement step with new rule system..."
-  );
-
-  const systemPrompt = `Ты — высокоточный редактор. Твоя задача — взять текст и запрос на изменение, а затем ВНЕСти ТОЛЬКО запрошенное изменение, НЕ НАРУШАЯ исходных правил. Соблюдение правил — твой главный приоритет. Не переписывай весь текст, если этого не просят.`;
-
-  const primaryKeywordInstructions = calculateKeywordInstructions(
-    data.primaryKeywords
-  );
-
-
-  const userPromptForLLM = `
-ЗАДАЧА: Аккуратно отредактируй ИСХОДНЫЙ ТЕКСТ в соответствии с ЗАПРОСОМ ПОЛЬЗОВАТЕЛЯ, при этом СТРОГО СОБЛЮДАЯ все КРИТИЧЕСКИЕ ПРАВИЛА.
-
---- ИСХОДНЫЙ ТЕКСТ ---
-${originalContent}
-
---- ЗАПРОС ПОЛЬЗОВАТЕЛЯ НА ИЗМЕНЕНИЕ ---
-"${userPrompt}"
-
---- КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА (ДОЛЖНЫ СОБЛЮДАТЬСЯ БЕЗУСЛОВНО) ---
-
-ПРАВИЛО №1: ОБЪЕМ ТЕКСТА
-Итоговый текст должен быть объемом СТРОГО от 1800 до 2000 символов. Если запрос пользователя (например, "удали абзац") выводит текст из этих рамок, скорректируй другой "водянистый" текст без ключевых и вводных слов (например, помимо того, благодаря чему и т.п.), чтобы вернуться в диапазон.
-
-ПРАВИЛО №2: КЛЮЧЕВЫЕ СЛОВА
-Все ключевые слова из исходного текста должны остаться в финальном тексте.
-- Основные ключи:
-${primaryKeywordInstructions
-  .map((instr) => `- "${instr.keyword}" (должно быть ~${instr.count} раз)`)
-  .join("\n")}
-- Дополнительные ключи:
-${data.secondaryKeywords.map((k) => `- "${k}" (должен быть 1 раз)`).join("\n")}
-
---- ИНСТРУКЦИЯ ПО ВЫПОЛНЕНИЮ ---
-1. Прочитай ИСХОДНЫЙ ТЕКСТ.
-2. Прочитай ЗАПРОС ПОЛЬЗОВАТЕЛЯ.
-3. Внеси запрошенное изменение.
-4. ПРОВЕРЬ, что результат соответствует ПРАВИЛУ №1 и ПРАВИЛУ №2.
-5. Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев.
-
-=== ПРОВЕРЬ СЕБЯ ПЕРЕД ВОЗВРАТОМ ===
-Проверь: 1) объем текста 1800–2000 символов; 2) все ключевые слова на месте в нужной плотности. Если есть отклонения — исправь перед возвратом результата.
-`;
-
-  try {
-    const result = await genAI.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: [{ role: "user", parts: [{ text: userPromptForLLM }] }],
-      config: {
-        temperature: 0.3,
-        maxOutputTokens: 768,
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-      },
-    });
-    const refinedContent =
-      result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (refinedContent) {
-      console.log(`[Refiner] Successfully generated refined text.`);
-      return refinedContent;
-    }
-    console.warn(
-      `[Refiner] Refinement step generated empty content. Returning original.`
-    );
-    return originalContent;
-  } catch (error) {
-    console.error(`[Refiner] FAILED: API error during user refinement.`, error);
-    return originalContent;
-  }
-}
 
 const processTask = async () => {
   console.log(
@@ -191,79 +116,96 @@ const processTask = async () => {
   }
 };
 
-export function calculateKeywordInstructions(
-  primaryKeywords: string[]
-): KeywordInstruction[] {
-  const TARGET_DENSITY_CHARS = 1900 * 0.04; // 4% от 1900 символов = 76 символов
-  if (primaryKeywords.length === 0) return [];
+// --- ФУНКЦИЯ РУЧНОЙ КОРРЕКЦИИ ---
+export async function runUserRefinement(
+  originalContent: string,
+  userPrompt: string,
+  data: GenerationRequest
+): Promise<string> {
+  console.log(
+    "[Refiner] Starting user refinement step..."
+  );
 
-  const charsPerKeyword = TARGET_DENSITY_CHARS / primaryKeywords.length;
+  const systemPrompt = `Ты — высокоточный редактор. Твоя задача — взять текст и запрос на изменение, а затем ВНЕСТИ ТОЛЬКО запрошенное изменение, НЕ НАРУШАЯ исходных правил. Соблюдение правил — твой главный приоритет.`;
 
-  return primaryKeywords.map((keyword) => {
-    const count = Math.max(1, Math.round(charsPerKeyword / keyword.length));
-    return { keyword, count };
-  });
+  const userPromptForLLM = `
+ЗАДАЧА: Аккуратно отредактируй ИСХОДНЫЙ ТЕКСТ в соответствии с ЗАПРОСОМ ПОЛЬЗОВАТЕЛЯ, при этом СТРОГО СОБЛЮДАЯ все КРИТИЧЕСКИЕ ПРАВИЛА.
+
+--- ИСХОДНЫЙ ТЕКСТ ---
+${originalContent}
+
+--- ЗАПРОС ПОЛЬЗОВАТЕЛЯ НА ИЗМЕНЕНИЕ ---
+"${userPrompt}"
+
+--- КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА (ДОЛЖНЫ СОБЛЮДАТЬСЯ БЕЗУСЛОВНО) ---
+1.  **ОБЪЕМ ТЕКСТА:** Итоговый текст должен быть объемом СТРОГО от 1800 до 2000 символов.
+2.  **КЛЮЧЕВЫЕ СЛОВА:** Все обязательные ключи должны остаться в тексте.
+
+Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев.
+`;
+
+  try {
+    const result = await genAI.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [{ role: "user", parts: [{ text: userPromptForLLM }] }],
+      config: {
+        temperature: 0.3,
+        maxOutputTokens: 1024,
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+      },
+    });
+    const refinedContent =
+      result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (refinedContent) {
+      console.log(`[Refiner] Successfully generated refined text.`);
+      return refinedContent;
+    }
+    return originalContent;
+  } catch (error) {
+    console.error(`[Refiner] FAILED: API error during user refinement.`, error);
+    return originalContent;
+  }
 }
 
-async function generateFinalText(
-  data: GenerationRequest
-): Promise<{ title: string; content: string }> {
-  const systemPrompt = `Ты — высокоточный SEO-копирайтер. Твоя главная задача — СТРОГО СЛЕДОВАТЬ ВСЕМ ПРАВИЛАМ И ОГРАНИЧЕНИЯМ, предоставленным пользователем. Несоблюдение правил недопустимо. Твоя цель — сгенерировать текст, который на 100% пройдет валидацию по заданным критериям.`;
+// --- НОВАЯ АРХИТЕКТУРА "ДВА КОНВЕРТА" ---
 
-  const primaryKeywordInstructions = calculateKeywordInstructions(
-    data.primaryKeywords
-  );
+function parseLLMResponse(responseText: string): { title: string; content: string } {
+    const contentParts = responseText.split("===");
+    let title = "", description = "";
+    for (let i = 0; i < contentParts.length; i++) {
+        if (contentParts[i].includes("ЗАГОЛОВОК") && i + 1 < contentParts.length) {
+            title = contentParts[i + 1].trim();
+        } else if (contentParts[i].includes("ОПИСАНИЕ") && i + 1 < contentParts.length) {
+            description = contentParts[i + 1].trim();
+        }
+    }
+    if (!title && !description) {
+        console.warn("[Generator] Could not parse LLM response. Using fallback.");
+        const lines = responseText.trim().split("\n");
+        title = lines[0] || "Заголовок не был сгенерирован";
+        description = lines.slice(1).join("\n").trim() || responseText;
+    }
+    return { title, content: description };
+}
+
+// ЭТАП 1: Генерация качественной базы без ключей
+async function generateBaseContent(data: GenerationRequest): Promise<{ title: string; content: string }> {
+  console.log("[Generator Stage 1] Generating base content without keywords.");
+  const systemPrompt = `Ты — опытный копирайтер. Твоя задача — написать "живой" и убедительный текст для карточки товара, основываясь на его преимуществах. ЗАБУДЬ О SEO И КЛЮЧЕВЫХ СЛОВАХ. Сосредоточься на качестве, пользе для клиента и соблюдении объема.`;
+  
   const userPrompt = `
-=== ВАЖНО ===
-Соблюдай ВСЕ ПРАВИЛА без исключений. Нарушение даже одного из них считается ошибкой.
+ЗАДАЧА: Напиши убедительный текст, разделенный на 5-7 логических абзацев.
+КРИТИЧЕСКИ ВАЖНО: Объем текста ОПИСАНИЯ должен быть около 1600-1700 символов. Это строгое требование.
 
-=== ПРАВИЛО №1: ОБЪЕМ ===
-Напиши текст от 1800 до 2000 символов (включая пробелы). Не считай символы вручную — просто следи, чтобы он не был слишком коротким или слишком длинным. При необходимости сократи или дополни «водой», не затрагивая ключевые слова.
+ВХОДНЫЕ ДАННЫЕ:
+- Отзывы конкурентов (закрой эти боли): ${data.reviews}
+- УТП (раскрой все, говоря о выгоде): ${data.usp.join(', ')}
 
-Структура:
-- Ровно **6 абзацев**
-- Каждый абзац по **2–4 предложения**
-- Предложения должны быть разной длины
-
-=== ПРАВИЛО №2: КЛЮЧЕВЫЕ СЛОВА ===
-В тексте ОБЯЗАНЫ присутствовать все ключевые слова.
-
-**Основные ключевые фразы** (в нужной плотности):
-${primaryKeywordInstructions
-  .map((instr) => `- "${instr.keyword}" — не менее ${instr.count} раз`).join("\n")}
-
-**Дополнительные ключи** (каждый — ровно 1 раз):
-${data.secondaryKeywords.map((k) => `- "${k}"`).join("\n")}
-
-Можно изменять падежи и формы, но нельзя убирать фразы полностью.
-
-=== ПРАВИЛО №3: СТИЛЬ ===
-- Пиши живым, убедительным языком
-- Используй простой и ясный стиль
-- НЕ начинай предложения с ключевых фраз
-- Показывай выгоды для клиента
-- Не повторяй одни и те же конструкции
-
-=== ВХОДНЫЕ ДАННЫЕ ===
-- URL товара: ${data.productUrl}
-- Отзывы конкурентов (учти и закрой боли):
-${data.reviews}
-- Уникальные торговые предложения (раскрой их через пользу для клиента):
-${data.usp.map((u, i) => `${i + 1}. ${u}`).join("\n")}
-
-=== ФОРМАТ ОТВЕТА ===
+ФОРМАТ ОТВЕТА:
 ===ЗАГОЛОВОК===
-[Краткий, привлекательный заголовок до 60 символов]
+[яркий, привлекательный заголовок]
 ===ОПИСАНИЕ===
-[Текст, строго соблюдающий ВСЕ правила]
-
-=== ПРОВЕРКА ПЕРЕД ВОЗВРАТОМ ===
-Проверь: 
-1. Объем 1800–2000 символов
-2. Есть все ключевые слова с нужной частотой
-3. Ровно 6 абзацев
-4. Абзацы читаются естественно
-5. Стиль соответствует инструкциям
+[текст объемом 1700-1800 символов]
 `;
 
   const result = await genAI.models.generateContent({
@@ -271,214 +213,102 @@ ${data.usp.map((u, i) => `${i + 1}. ${u}`).join("\n")}
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],
     config: {
       temperature: 0.7,
-      maxOutputTokens: 768,
+      maxOutputTokens: 850,
       safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
       ],
       systemInstruction: { parts: [{ text: systemPrompt }] },
     },
   });
-
   const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-  const contentParts = responseText.split("===");
-  let title = "";
-  let description = "";
-
-  for (let i = 0; i < contentParts.length; i++) {
-    if (contentParts[i].includes("ЗАГОЛОВОК") && i + 1 < contentParts.length) {
-      title = contentParts[i + 1].trim();
-    } else if (
-      contentParts[i].includes("ОПИСАНИЕ") &&
-      i + 1 < contentParts.length
-    ) {
-      description = contentParts[i + 1].trim();
-    }
-  }
-
-  if (!title || !description) {
-    console.warn(
-      "[Generator] Could not parse LLM response using '===' separators. Using fallback."
-    );
-    const lines = responseText.trim().split("\n");
-    title = lines[0] || "Заголовок не был сгенерирован";
-    description = lines.slice(1).join("\n").trim() || responseText;
-  }
-
-  return { title, content: description };
+  return parseLLMResponse(responseText);
 }
 
-
-async function runCorrection(
-  originalContent: string,
-  issues: string[],
-  data: GenerationRequest
-): Promise<string> {
-  console.log("[Corrector] Starting correction step with optimized prompts...");
-  const systemPrompt = `Ты — редактор-эксперт. Твоя задача — взять текст, список КОНКРЕТНЫХ ошибок и набор КОНКРЕТНЫХ правил, а затем аккуратно переписать текст, исправляя ТОЛЬКО указанные ошибки и не нарушая правил. Сохраняй стиль и смысл.`;
-
-
-  const primaryKeywordInstructions = calculateKeywordInstructions(
-    data.primaryKeywords
-  );
+// ЭТАП 2: Хирургическое внедрение ключей
+async function injectKeywords(baseContent: string, data: GenerationRequest): Promise<string> {
+  console.log("[Generator Stage 2] Injecting keywords into base content.");
+  const systemPrompt = `Ты — SEO-редактор. Твоя задача — взять готовый текст и АККУРАТНО внедрить в него все ключевые слова из списка. Сохраняй стиль и смысл исходного текста. Не добавляй много новой информации. Твоя цель — чтобы текст после твоих правок прошел SEO-валидацию.`;
 
   const userPrompt = `
-=== ЗАДАЧА ===
-Перепиши ИСХОДНЫЙ ТЕКСТ, исправив ТОЛЬКО указанные ошибки. Не меняй остальное. Соблюдай правила и стиль.
+ОТРЕДАКТИРУЙ ЭТОТ ТЕКСТ:
+---
+${baseContent}
+---
 
-=== ИСХОДНЫЙ ТЕКСТ ===
-${originalContent}
+ОБЯЗАТЕЛЬНО ВНЕДРИ В НЕГО:
+1.  **Все обязательные ключи:** ${data.requiredKeywords.join(', ')}. Постарайся, чтобы каждое слово встречалось 1-2 раза.
+2.  **Как можно больше необязательных ключей:** ${data.optionalKeywords.join(', ')}.
 
-=== КОНКРЕТНЫЕ ОШИБКИ, КОТОРЫЕ НУЖНО ИСПРАВИТЬ ===
-${issues.join("\n")}
+ВАЖНО: Итоговый текст должен быть не сильно длиннее исходного. Постарайся уложиться в 2000 символов.
 
-=== ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА ===
-
-1. **ОБЪЕМ**
-- Текст должен быть от 1800 до 2000 символов
-- Ровно 6 абзацев
-- Каждый абзац — 2–4 предложения
-- Естественный ритм и разнообразная длина предложений
-- При необходимости дополни или сократи "водой", не убирая ключей
-
-2. **КЛЮЧЕВЫЕ СЛОВА**
-
-**Основные ключи**:
-${primaryKeywordInstructions
-  .map((instr) => `- "${instr.keyword}" — не менее ${instr.count} раз`).join("\n")}
-
-**Дополнительные ключи**:
-${data.secondaryKeywords.map((k) => `- "${k}" — ровно 1 раз`).join("\n")}
-
-Разрешено менять падежи и формы.
-
-3. **СТИЛЬ**
-- Язык — живой и убедительный
-- Избегай сухих, канцелярских фраз
-- Не начинай предложения с ключей
-- Не повторяй одни и те же конструкции
-
-=== ВАЖНО ===
-Нельзя переписывать весь текст, если это не требуется. Правь только то, что указано в списке ошибок.
-
-=== ПРОВЕРКА ПЕРЕД ВОЗВРАТОМ ===
-Проверь:
-1. Объем в допустимых границах
-2. Все ключи присутствуют в нужной плотности
-3. Ровно 6 абзацев, 2–4 предложения каждый
-4. Текст читается естественно
-5. Стиль соответствует требованиям
+Верни ТОЛЬКО финальный, отредактированный текст.
 `;
 
-  try {
-    const result = await genAI.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-      config: {
-        temperature: 0.5,
-        maxOutputTokens: 768,
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-      },
-    });
-    const correctedContent =
-      result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (correctedContent) {
-      console.log(`[Corrector] Successfully generated corrected text.`);
-      return correctedContent;
-    }
-    console.warn(
-      `[Corrector] Correction step generated empty content. Returning original.`
-    );
-    return originalContent;
-  } catch (error) {
-    console.error(`[Corrector] FAILED: API error during correction.`, error);
-    return originalContent;
-  }
+  const result = await genAI.models.generateContent({
+    model: "gemini-2.0-flash",
+    contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+    config: {
+      temperature: 0.4,
+      maxOutputTokens: 1024,
+      safetySettings: [
+        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      ],
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+    },
+  });
+  return result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || baseContent;
 }
 
 
+// --- НОВАЯ ГЛАВНАЯ ЛОГИКА ---
 async function runGenerationWithValidation(
   data: GenerationRequest
 ): Promise<GenerationResult> {
-  console.log(`[Generator] Starting unified generation process...`);
+  console.log(`[Generator] Starting 2-stage generation process...`);
+  
+  // 1. Генерируем базу
+  const { title, content: baseContent } = await generateBaseContent(data);
 
-  console.log("[Generator] Attempt 1: Generating initial text.");
-  const { title, content } = await generateFinalText(data);
-  const validationInstructions = calculateKeywordInstructions(
-    data.primaryKeywords
-  );
-  const firstValidationResult = await validator.validate(
-    content,
-    validationInstructions,
-    data.secondaryKeywords
-  );
-
-  if (firstValidationResult.isValid) {
-    console.log("[Generator] Attempt 1 SUCCEEDED. Validation passed.");
-    const additionalChecks = checkAdditionalRequirements(content, data);
-    return prepareFinalResult(
-      title,
-      content,
-      firstValidationResult,
-      additionalChecks,
-      1,
-      true
-    );
+  // 2. Внедряем ключи
+  let contentWithKeywords = await injectKeywords(baseContent, data);
+  
+  // 3. Финальная "мягкая" обрезка
+  let processingLog: { added: string[], removed: string[] } = { added: [], removed: [] };
+  if (contentWithKeywords.length > MAX_CONTENT_LENGTH) {
+    const allKeywords = [...data.requiredKeywords, ...data.optionalKeywords];
+    const truncationResult = intelligentTruncate(contentWithKeywords, MAX_CONTENT_LENGTH, allKeywords);
+    contentWithKeywords = truncationResult.newContent;
+    processingLog.removed.push(...truncationResult.removedSentences);
   }
 
-  console.warn(
-    `[Generator] Attempt 1 FAILED. Issues:`,
-    firstValidationResult.issues
+  // 4. Финальная валидация
+  console.log("[Generator] Performing final validation...");
+  const validationResult = await validator.validate(
+    contentWithKeywords,
+    data.requiredKeywords,
+    data.optionalKeywords
   );
-  console.log("[Generator] Attempt 2: Starting correction process.");
-
-  const correctedContent = await runCorrection(
-    content,
-    firstValidationResult.issues,
-    data
-  );
-  const secondValidationResult = await validator.validate(
-    correctedContent,
-    validationInstructions,
-    data.secondaryKeywords
-  );
-
-  const isSuccess = secondValidationResult.isValid;
+  
+  const isSuccess = validationResult.isValid;
   if (isSuccess) {
-    console.log("[Generator] Attempt 2 SUCCEEDED. Correction was successful.");
+    console.log("[Generator] Final validation successful.");
   } else {
-    console.warn(
-      "[Generator] Attempt 2 FAILED. Text still has issues after correction:",
-      secondValidationResult.issues
-    );
+    console.warn("[Generator] Final validation failed with issues:", validationResult.issues);
   }
 
-  const additionalChecks = checkAdditionalRequirements(correctedContent, data);
-  return prepareFinalResult(
-    title,
-    correctedContent,
-    secondValidationResult,
-    additionalChecks,
-    2,
-    isSuccess
-  );
+  const additionalChecks = checkAdditionalRequirements(contentWithKeywords, data);
+  // Для пользователя это одна попытка, даже если внутри было 2 вызова LLM
+  return prepareFinalResult(title, contentWithKeywords, validationResult, additionalChecks, 1, isSuccess, processingLog);
 }
 
+
+// --- ФУНКЦИЯ ПОДГОТОВКИ РЕЗУЛЬТАТА ---
 export function prepareFinalResult(
   title: string,
   content: string,
@@ -486,7 +316,7 @@ export function prepareFinalResult(
   additionalChecks: { issues: string[]; checks: any },
   attempts: number,
   success: boolean,
-  processingLog: { added: string[]; removed: string[] } = {
+  processingLog: { added: string[], removed: string[] } = {
     added: [],
     removed: [],
   }
@@ -494,36 +324,36 @@ export function prepareFinalResult(
   const keywordDetails: KeywordDetail[] = [];
   const keywordUsage = validation.metrics.keywordUsageDetails || {};
 
-  for (const [keyword, details] of Object.entries(keywordUsage)) {
-    const count = details.count || 0;
-    const example = findKeywordExample(content, keyword); 
+  const allKeywords = [
+    ...(validation.metrics.missingKeywords || []), 
+    ...(validation.metrics.keywordsFound || [])
+  ];
+
+  for (const keyword of allKeywords) {
+    const count = keywordUsage[keyword]?.count || 0;
+    const example = findKeywordExample(content, keyword);
     keywordDetails.push({ keyword, count, example });
   }
 
   const finalContent = `**${title}**\n\n${content}`;
-
 
   const result: GenerationResult = {
     success,
     content: finalContent,
     title,
     description: content,
-    
     metrics: {
-      ...validation.metrics, 
-      keywordDetails: keywordDetails, 
-      boldKeywordsCount: additionalChecks.checks.boldKeywords, 
+      ...validation.metrics,
+      keywordDetails: keywordDetails,
+      boldKeywordsCount: additionalChecks.checks.boldKeywords,
       utpCovered: additionalChecks.checks.utpCovered,
       painPointsAddressed: additionalChecks.checks.painPointsAddressed,
       trustTriggers: additionalChecks.checks.trustTriggers,
     },
     attempts,
     processingLog,
+    warnings: validation.issues,
   };
-
-  if (!success) {
-    result.warnings = validation.issues;
-  }
 
   return result;
 }

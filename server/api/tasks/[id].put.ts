@@ -4,7 +4,7 @@ import { updateTask } from '~/server/utils/redis';
 import type { GenerationResult, Task } from '~/types';
 import { z } from 'zod';
 
-// --- ДЕТАЛЬНЫЕ СХЕМЫ, СООТВЕТСТВУЮЩИЕ ВАШИМ ТИПАМ ---
+// --- ДЕТАЛЬНЫЕ СХЕМЫ, ПОЛНОСТЬЮ СИНХРОНИЗИРОВАННЫЕ С TYPES.TS ---
 
 // Схема для типа KeywordDetail
 const keywordDetailSchema = z.object({
@@ -13,36 +13,38 @@ const keywordDetailSchema = z.object({
   example: z.string(),
 });
 
-// Схема для типа ValidationMetrics
+// Схема для типа ValidationMetrics (теперь включает все новые поля)
 const validationMetricsSchema = z.object({
   charCount: z.number(),
   charCountNoSpaces: z.number(),
   wordCount: z.number(),
+  requiredKeywordsUsed: z.number(),
+  requiredKeywordsTotal: z.number(),
+  optionalKeywordsUsed: z.number(),
+  optionalKeywordsTotal: z.number(),
   keywordsFound: z.array(z.string()),
   keywordsUsed: z.number(),
   totalKeywords: z.number(),
   keywordDensity: z.number(),
-  charDensity: z.number(),
   keywordOccurrences: z.number(),
   missingKeywords: z.array(z.string()),
-  keywordUsageDetails: z.record(z.object({ count: z.number() })), // Точное соответствие Record<string, { count: number }>
+  keywordUsageDetails: z.record(z.object({ count: z.number() })),
   keywordPositions: z.object({
     beginning: z.number(),
     middle: z.number(),
     end: z.number(),
   }),
+  charDensity: z.number(),
 });
 
 // Схема для объекта metrics внутри GenerationResult
-// Он расширяет ValidationMetrics дополнительными полями
 const generationMetricsSchema = validationMetricsSchema.extend({
   keywordDetails: z.array(keywordDetailSchema),
   boldKeywordsCount: z.number(),
   utpCovered: z.number().optional(),
   painPointsAddressed: z.number().optional(),
   trustTriggers: z.number().optional(),
-}).passthrough();
-
+});
 
 // --- ФИНАЛЬНАЯ СХЕМА ДЛЯ GenerationResult ---
 const generationResultSchema = z.object({
@@ -50,13 +52,13 @@ const generationResultSchema = z.object({
   content: z.string(),
   title: z.string(),
   description: z.string(),
-  metrics: generationMetricsSchema.optional(), // Метрики могут отсутствовать (?)
+  metrics: generationMetricsSchema.optional(),
   attempts: z.number(),
-  warnings: z.array(z.string()).optional(), // warnings необязательны
+  warnings: z.array(z.string()).optional(),
   processingLog: z.object({
       added: z.array(z.string()),
       removed: z.array(z.string()),
-  }).optional(), // processingLog необязателен
+  }).optional(),
 });
 
 // Схема для валидации всего тела запроса
@@ -73,17 +75,16 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'Task ID is required' });
   }
 
-  // 1. Валидируем тело запроса
+  // 1. Валидируем тело запроса по новой, полной схеме
   const validation = updateBodySchema.safeParse(body);
   if (!validation.success) {
     console.error('[Task Update] Validation Error:', validation.error.errors);
     throw createError({ statusCode: 400, message: 'Invalid request body', data: validation.error.errors });
   }
   
-  // Теперь TypeScript полностью доверяет этому типу
   const { result } = validation.data;
 
-  // 2. Создаем объект с изменениями
+  // 2. Создаем объект с изменениями для Redis
   const updates: Partial<Task> = {
     result: result,
     status: 'completed',

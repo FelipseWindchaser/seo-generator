@@ -1,61 +1,61 @@
 // /server/api/refine.post.ts
 
 import { z } from 'zod';
-import { defineEventHandler, readValidatedBody, createError } from 'h3';
+import { defineEventHandler, readBody, createError } from 'h3';
 import { ContentValidator } from '~/server/utils/content-validator';
-// ИМПОРТИРУЕМ ВСЕ НЕОБХОДИМЫЕ ФУНКЦИИ
-import { runUserRefinement, prepareFinalResult, findKeywordExample, calculateKeywordInstructions, checkAdditionalRequirements } from '~/composables/processGeneration';
-import type { GenerationRequest, GenerationResult, KeywordInstruction } from '~/types';
+// ИЗМЕНЕНО: Убираем импорт удаленной функции calculateKeywordInstructions
+import { runUserRefinement, prepareFinalResult, checkAdditionalRequirements } from '~/composables/processGeneration';
+import type { GenerationRequest, GenerationResult } from '~/types';
 
-// --- Схемы валидации (остаются без изменений) ---
+// --- Схемы валидации (соответствуют последней логике) ---
 const generationRequestSchema = z.object({
   productUrl: z.string().url(),
-  primaryKeywords: z.array(z.string()).min(1).max(3),
-  secondaryKeywords: z.array(z.string()),
+  requiredKeywords: z.array(z.string()).length(10),
+  optionalKeywords: z.array(z.string()).max(10),
   reviews: z.string(),
   usp: z.array(z.string()),
   adsPlanned: z.boolean(),
   canChangeVisuals: z.boolean(),
-}).superRefine((data, ctx) => {
-    if (data.primaryKeywords.length + data.secondaryKeywords.length < 10) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "В сумме должно быть не менее 10 ключей", path: ["secondaryKeywords"] });
-    }
 });
 
 const refineBodySchema = z.object({
   originalTitle: z.string().min(1),
   originalContent: z.string().min(1),
   userPrompt: z.string().min(1),
-  data: generationRequestSchema,
+  generationData: generationRequestSchema,
 });
 
 // --- Инициализация ---
 const validator = new ContentValidator();
 
-// --- Обработчик API (полностью переписан) ---
+// --- Обработчик API ---
 export default defineEventHandler(async (event) => {
   try {
     // 1. Валидируем входящее тело запроса
-    const body = await readValidatedBody(event, (rawBody) => refineBodySchema.parse(rawBody));
-    const { originalTitle, originalContent, userPrompt, data } = body;
+    const body = await readBody(event);
+    const validatedBody = refineBodySchema.parse(body);
+    const { originalTitle, originalContent, userPrompt, generationData } = validatedBody;
 
     // 2. Вызываем LLM для рефакторинга текста
-    const refinedContent = await runUserRefinement(originalContent, userPrompt, data);
+    const refinedContent = await runUserRefinement(originalContent, userPrompt, generationData);
 
-    // 3. Повторно валидируем новый текст, чтобы получить свежие метрики
-    const primaryInstructions = calculateKeywordInstructions(data.primaryKeywords);
-    const validationResult = await validator.validate(refinedContent, primaryInstructions, data.secondaryKeywords);
+    // 3. ИСПРАВЛЕНО: Повторно валидируем новый текст, передавая простые массивы ключей
+    const validationResult = await validator.validate(
+      refinedContent, 
+      generationData.requiredKeywords, // <-- Передаем массив строк
+      generationData.optionalKeywords  // <-- Передаем массив строк
+    );
 
-    // 4. Собираем дополнительные метрики (например, количество жирных слов)
-    const additionalChecks = checkAdditionalRequirements(refinedContent, data);
+    // 4. Собираем дополнительные метрики
+    const additionalChecks = checkAdditionalRequirements(refinedContent, generationData);
 
-    // 5. ИСПОЛЬЗУЕМ prepareFinalResult для сборки ПОЛНОЦЕННОГО объекта GenerationResult
+    // 5. Собираем полноценный объект GenerationResult
     const finalResult: GenerationResult = prepareFinalResult(
-      originalTitle, // Заголовок можно взять из data или поставить заглушку
+      originalTitle,
       refinedContent,
       validationResult,
       additionalChecks,
-      -1, // Используем -1 или другое специальное значение для "попыток", чтобы обозначить доработку
+      -1, // Специальное значение для "попыток", обозначающее доработку
       validationResult.isValid
     );
 
@@ -64,7 +64,7 @@ export default defineEventHandler(async (event) => {
 
   } catch (error: any) {
     console.error(`[API /refine] Error:`, error);
-    if (error.name === 'ZodError') {
+    if (error instanceof z.ZodError) {
       throw createError({ statusCode: 400, statusMessage: 'Validation error', data: error.errors });
     }
     throw createError({ statusCode: 500, statusMessage: 'Internal Server Error', data: { message: error.message } });

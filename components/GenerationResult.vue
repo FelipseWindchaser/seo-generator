@@ -32,25 +32,98 @@
       </div>
 
       <!-- Метрики -->
-      <div class="bg-gray-50 rounded-lg p-4">
+      <div v-if="result.metrics" class="bg-gray-50 rounded-lg p-4">
         <h3 class="font-medium text-gray-900 mb-3">Метрики</h3>
-        <div class="space-y-2">
-          <div class="flex justify-between">
-            <span class="text-gray-600">Символов:</span
-            ><span class="font-medium">{{ result.metrics?.charCount }}</span>
+        <div class="space-y-4">
+          <!-- Общие метрики -->
+          <div class="text-sm space-y-1">
+            <div class="flex justify-between">
+              <span class="text-gray-600">Символов:</span>
+              <span class="font-medium">{{ result.metrics.charCount }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-600"
+                >Плотность (по обязательным ключам):</span
+              >
+              <span class="font-medium"
+                >{{ result.metrics.keywordDensity?.toFixed(2) }}%</span
+              >
+            </div>
           </div>
-          <div class="flex justify-between">
-            <span class="text-gray-600">Использовано ключей:</span
-            ><span class="font-medium"
-              >{{ result.metrics?.keywordsUsed }} из
-              {{ result.metrics?.totalKeywords }}</span
-            >
+
+          <!-- Детализация по обязательным ключам -->
+          <div class="pt-3 border-t border-gray-200">
+            <!-- ИЗМЕНЕНО: Заголовок и счетчик объединены в одну строку -->
+            <div class="flex justify-between items-baseline text-sm mb-2">
+              <h4 class="font-semibold text-gray-800">Обязательные ключи</h4>
+              <span class="font-medium text-gray-600">
+                {{ result.metrics.requiredKeywordsUsed }} /
+                {{ result.metrics.requiredKeywordsTotal }}
+              </span>
+            </div>
+            <!-- Обертка для таблицы с рамкой -->
+            <div class="border border-gray-200 rounded-md bg-white">
+              <!-- ИЗМЕНЕНО: Стилизован заголовок таблицы -->
+              <div
+                class="flex justify-between text-xs font-semibold text-gray-500 uppercase px-2 py-1.5 bg-gray-100 border-b border-gray-200"
+              >
+                <span>Ключ</span>
+                <span>Кол-во</span>
+              </div>
+              <ul class="text-xs">
+                <li
+                  v-for="(keyword, index) in requiredKeywordsList"
+                  :key="keyword.name"
+                  class="flex justify-between items-center py-1.5 px-2"
+                  :class="{ 'border-t border-gray-100': index > 0 }"
+                >
+                  <span class="text-gray-600">{{ keyword.name }}</span>
+                  <span
+                    :class="
+                      keyword.count > 0 ? 'text-green-600' : 'text-red-600'
+                    "
+                    class="font-mono bg-gray-200 px-1.5 py-0.5 rounded"
+                  >
+                    {{ keyword.count }}
+                  </span>
+                </li>
+              </ul>
+            </div>
           </div>
-          <div class="flex justify-between">
-            <span class="text-gray-600">Плотность ключей:</span
-            ><span class="font-medium"
-              >{{ result.metrics?.keywordDensity }}%</span
-            >
+
+          <!-- Детализация по необязательным ключам -->
+          <div class="pt-3 border-t border-gray-200">
+            <!-- ИЗМЕНЕНО: Заголовок и счетчик объединены в одну строку -->
+            <div class="flex justify-between items-baseline text-sm mb-2">
+              <h4 class="font-semibold text-gray-800">Необязательные ключи</h4>
+              <span class="font-medium text-gray-600">
+                {{ result.metrics.optionalKeywordsUsed }} /
+                {{ result.metrics.optionalKeywordsTotal }}
+              </span>
+            </div>
+            <!-- Обертка для таблицы с рамкой -->
+            <div class="border border-gray-200 rounded-md bg-white">
+              <!-- ИЗМЕНЕНО: Стилизован заголовок таблицы -->
+              <div
+                class="flex justify-between text-xs font-semibold text-gray-500 uppercase px-2 py-1.5 bg-gray-100 border-b border-gray-200"
+              >
+                <span>Ключ</span>
+                <span>Кол-во</span>
+              </div>
+              <ul class="text-xs">
+                <li
+                  v-for="(keyword, index) in optionalKeywordsList"
+                  :key="keyword.name"
+                  class="flex justify-between items-center py-1.5 px-2"
+                  :class="{ 'border-t border-gray-100': index > 0 }"
+                >
+                  <span class="text-gray-600">{{ keyword.name }}</span>
+                  <span class="font-mono bg-gray-200 px-1.5 py-0.5 rounded">{{
+                    keyword.count
+                  }}</span>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
@@ -83,7 +156,6 @@
           class="w-full p-2 border border-gray-300 rounded-md"
           placeholder="Например: Сделай текст более официальным..."
         ></textarea>
-
         <div class="mt-3 flex flex-col sm:flex-row gap-2">
           <button
             @click="handleRefinement"
@@ -93,7 +165,6 @@
             <LoadingSpinner v-if="isRefining" class="mr-2" :size="20" />
             {{ isRefining ? "Улучшаем..." : "🚀 Улучшить по промпту" }}
           </button>
-
           <button
             @click="handleSave"
             :disabled="isSaving"
@@ -103,7 +174,6 @@
             {{ isSaving ? "Сохраняем..." : "💾 Сохранить текущий результат" }}
           </button>
         </div>
-
         <p v-if="refinementError" class="text-sm text-red-600 mt-2">
           {{ refinementError }}
         </p>
@@ -147,48 +217,25 @@ const emit = defineEmits<{
   reset: [];
 }>();
 
-// Состояние
 const status = ref<"processing" | "completed" | "error">("processing");
 const result = ref<GenerationResult | null>(null);
-const originalRequest = ref<GenerationRequest | null>(null); // Храним исходный запрос
+const originalRequest = ref<GenerationRequest | null>(null);
 const error = ref<string>("");
 const copied = ref(false);
 
-// Состояние для блока улучшения
 const refinementPrompt = ref("");
 const isRefining = ref(false);
 const refinementError = ref("");
-
-// const hasBeenRefined = ref(false);
 const isSaving = ref(false);
 const saveSuccessMessage = ref("");
 
-// Проверка статуса
 const checkStatus = async () => {
   try {
     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
-
-    // --- DEBUG LOG ---
-    console.log("[checkStatus] Received status response:", response);
-
     if (response.status === "completed") {
       status.value = "completed";
       result.value = response?.result || null;
-      // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
-      // Сохраняем исходный запрос из ответа API
       originalRequest.value = response?.request || null;
-
-      // --- DEBUG LOG ---
-      console.log(
-        "[checkStatus] Task completed. Result populated:",
-        !!result.value
-      );
-      console.log(
-        "[checkStatus] Original request populated:",
-        !!originalRequest.value,
-        originalRequest.value
-      );
-
       if (!result.value) {
         status.value = "error";
         error.value = "Задача завершена, но результат генерации отсутствует.";
@@ -206,86 +253,60 @@ const checkStatus = async () => {
   }
 };
 
-// Обработка запроса на улучшение
-const handleRefinement = async () => {
-  // --- DEBUG LOG ---
-  console.log("--- [handleRefinement] CLICKED ---");
+const requiredKeywordsList = computed(() => {
+  if (!originalRequest.value || !result.value?.metrics?.keywordUsageDetails) {
+    return [];
+  }
+  return originalRequest.value.requiredKeywords.map((keywordName) => ({
+    name: keywordName,
+    count: result.value?.metrics?.keywordUsageDetails[keywordName]?.count || 0,
+  }));
+});
 
-  // 1. Проверка наличия всех необходимых данных
+const optionalKeywordsList = computed(() => {
+  if (!originalRequest.value || !result.value?.metrics?.keywordUsageDetails) {
+    return [];
+  }
+  return originalRequest.value.optionalKeywords.map((keywordName) => ({
+    name: keywordName,
+    count: result.value?.metrics?.keywordUsageDetails[keywordName]?.count || 0,
+  }));
+});
+
+const handleRefinement = async () => {
   if (
     !refinementPrompt.value.trim() ||
     !result.value?.description ||
     !originalRequest.value
   ) {
-    const errorMessage =
-      "Не все данные для улучшения готовы. Попробуйте обновить страницу.";
-    console.error("[handleRefinement] Guard condition FAILED. Aborting.", {
-      prompt: !!refinementPrompt.value.trim(),
-      description: !!result.value?.description,
-      request: !!originalRequest.value,
-    });
-    refinementError.value = errorMessage;
+    refinementError.value = "Не все данные для улучшения готовы.";
     return;
   }
-
   isRefining.value = true;
   refinementError.value = "";
-
-  // 2. Формирование тела запроса (payload). Этот код уже правильный.
-  const payload = {
-    originalContent: result.value.description,
-    userPrompt: refinementPrompt.value,
-    data: originalRequest.value,
-    originalTitle: result.value.title,
-  };
-
-  console.log("[handleRefinement] Payload to be sent:", payload);
+  saveSuccessMessage.value = "";
 
   try {
-    // 3. ИСПРАВЛЕНО: Ожидаем от API полноценный объект GenerationResult
     const newResult = await $fetch<GenerationResult>("/api/refine", {
       method: "POST",
-      body: payload,
+      body: {
+        originalContent: result.value.description,
+        userPrompt: refinementPrompt.value,
+        generationData: originalRequest.value,
+        originalTitle: result.value.title,
+      },
     });
-
-    console.log(
-      "[handleRefinement] SUCCESS. Received new full result:",
-      newResult
-    );
-
-    // 4. ИСПРАВЛЕНО: Полностью заменяем старый результат новым.
-    // Это гарантирует, что все поля (включая вложенные метрики) будут корректными.
     result.value = newResult;
-
-    refinementPrompt.value = ""; // Очищаем поле ввода после успеха
+    refinementPrompt.value = "";
   } catch (err: any) {
-    // 5. ИСПРАВЛЕНО: Улучшенная обработка ошибок
-    console.error("[handleRefinement] FAILED. API call error object:", err);
-
-    // Сначала пытаемся достать сообщение из данных ошибки, если они есть
-    if (err.data && err.data.message) {
-      refinementError.value = `Ошибка сервера: ${err.data.message}`;
-    }
-    // Если данных нет, но есть статусное сообщение от h3/ofetch
-    else if (err.statusMessage) {
-      refinementError.value = `Ошибка сервера (${err.statusCode || ""}): ${
-        err.statusMessage
-      }`;
-    }
-    // Самый крайний случай (например, CORS или проблемы с сетью)
-    else {
-      refinementError.value =
-        "Произошла неизвестная ошибка при связи с сервером.";
-    }
+    refinementError.value = err.data?.message || "Не удалось улучшить текст.";
   } finally {
     isRefining.value = false;
   }
 };
 
-// НОВАЯ ФУНКЦИЯ: Сохранение результата
 const handleSave = async () => {
   if (!result.value) return;
-
   isSaving.value = true;
   saveSuccessMessage.value = "";
   refinementError.value = "";
@@ -293,16 +314,11 @@ const handleSave = async () => {
   try {
     await $fetch(`/api/tasks/${props.taskId}`, {
       method: "PUT",
-      body: {
-        result: result.value, // Отправляем весь текущий объект результата
-      },
+      body: { result: result.value },
     });
-
     saveSuccessMessage.value = "✅ Результат успешно сохранен!";
-    // hasBeenRefined.value = false; // Сбрасываем флаг, так как текущее состояние сохранено
-    setTimeout(() => (saveSuccessMessage.value = ""), 3000); // Убираем сообщение через 3 сек
+    setTimeout(() => (saveSuccessMessage.value = ""), 3000);
   } catch (err: any) {
-    console.error("Save failed:", err);
     refinementError.value =
       err.data?.message || "Не удалось сохранить результат.";
   } finally {
@@ -310,7 +326,6 @@ const handleSave = async () => {
   }
 };
 
-// Форматирование контента
 const formattedContent = computed(() => {
   if (!result.value?.content) return "";
   return result.value.content
@@ -318,7 +333,6 @@ const formattedContent = computed(() => {
     .replace(/\n/g, "<br>");
 });
 
-// Копирование в буфер обмена
 const copyToClipboard = async () => {
   if (!result.value?.content) return;
   try {
@@ -332,10 +346,9 @@ const copyToClipboard = async () => {
   }
 };
 
-// Хуки жизненного цикла
 let intervalId: NodeJS.Timeout;
 onMounted(() => {
-  checkStatus(); // Первая проверка сразу
+  checkStatus();
   intervalId = setInterval(() => {
     if (status.value === "processing") {
       checkStatus();

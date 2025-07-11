@@ -1,4 +1,7 @@
-// Основные типы данных
+// /types/index.ts
+
+// --- Типы для инструкций и запросов ---
+
 /**
  * @description Новый тип для передачи конкретных инструкций по количеству использований
  * ключевого слова. Используется для передачи рассчитанных данных в генератор промптов и валидатор.
@@ -7,28 +10,53 @@ export interface KeywordInstruction {
   keyword: string;
   count: number;
 }
+
+/**
+ * @description Основной объект запроса на генерацию.
+ * ИСПОЛЬЗУЕТ НОВУЮ СТРУКТУРУ КЛЮЧЕЙ.
+ */
 export interface GenerationRequest {
   productUrl: string;
-  primaryKeywords: string[];
-  secondaryKeywords: string[];
+  requiredKeywords: string[]; // 10 обязательных ключей
+  optionalKeywords: string[]; // до 10 необязательных
   reviews: string;
   usp: string[];
   adsPlanned: boolean;
   canChangeVisuals: boolean;
 }
 
+
+// --- Типы для метрик и результатов валидации ---
+
+/**
+ * @description Метрики, рассчитываемые валидатором.
+ * ДОБАВЛЕНЫ НОВЫЕ ПОЛЯ для детализации по типам ключей.
+ */
 export interface ValidationMetrics {
   charCount: number;
   charCountNoSpaces: number;
   wordCount: number;
+  
+  // Новые детализированные поля
+  requiredKeywordsUsed: number;
+  requiredKeywordsTotal: number;
+  optionalKeywordsUsed: number;
+  optionalKeywordsTotal: number;
+
+  // Старые поля для общей информации
   keywordsFound: string[];
   keywordsUsed: number;
   totalKeywords: number;
+  
+  // Плотность теперь считается только по обязательным ключам
   keywordDensity: number;
-  charDensity: number;
-  keywordOccurrences: number;
-  missingKeywords: string[];
+  keywordOccurrences: number; // Вхождения только обязательных ключей
+  
+  missingKeywords: string[]; // Только обязательные пропущенные ключи
   keywordUsageDetails: Record<string, { count: number }>;
+  
+  // Эти поля можно оставить как есть или доработать
+  charDensity: number;
   keywordPositions: {
     beginning: number;
     middle: number;
@@ -46,6 +74,17 @@ export interface ReadabilityMetrics {
   lexicalDiversity: number;
 }
 
+export interface SemanticMetrics {
+  keywordStuffingDetected: boolean;
+  lowCoherenceScore: boolean;
+  avgCoherence: number;
+  adClichesCount: number;
+  paragraphCount: number;
+}
+
+/**
+ * @description Полный результат валидации, который содержит все метрики и ошибки.
+ */
 export interface ValidationResult {
   isValid: boolean;
   metrics: ValidationMetrics & {
@@ -55,20 +94,25 @@ export interface ValidationResult {
   issues: string[];
 }
 
-export interface SemanticMetrics {
-  keywordStuffingDetected: boolean;
-  lowCoherenceScore: boolean;
-  avgCoherence: number;
-  adClichesCount: number;
-  paragraphCount: number;
+
+// --- Основные типы для результата и задачи ---
+
+export interface KeywordDetail {
+  keyword: string;
+  count: number;
+  example: string;
 }
 
+/**
+ * @description Финальный объект результата, который сохраняется в БД и отдается клиенту.
+ * Структура metrics здесь соответствует ValidationMetrics.
+ */
 export interface GenerationResult {
   success: boolean;
   content: string;
   title: string;
   description: string;
-  metrics?: ValidationMetrics & {
+  metrics?: ValidationMetrics & { // Теперь этот тип включает все новые поля
     keywordDetails: KeywordDetail[];
     boldKeywordsCount: number;
     utpCovered?: number;
@@ -83,17 +127,14 @@ export interface GenerationResult {
   };
 }
 
-export interface KeywordDetail {
-  keyword: string;
-  count: number;
-  example: string;
-}
-
+/**
+ * @description Объект задачи, хранящийся в базе данных (например, Redis).
+ */
 export interface Task {
   id: string;
   status: "processing" | "completed" | "error";
-  request?: GenerationRequest;
-  result?: GenerationResult;
+  request?: GenerationRequest; // Использует обновленный GenerationRequest
+  result?: GenerationResult;   // Использует обновленный GenerationResult
   error?: string;
   createdAt: string;
   completedAt?: string;
