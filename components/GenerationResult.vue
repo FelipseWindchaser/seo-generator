@@ -341,10 +341,18 @@ const formattedContent = computed(() => {
     .replace(/\n/g, "<br>");
 });
 
+// --- НОВОЕ ВЫЧИСЛЯЕМОЕ СВОЙСТВО ---
+// "Чистый" текст без Markdown для копирования
+const plainTextContent = computed(() => {
+  if (!result.value?.content) return "";
+  // Удаляем ** и заменяем <br> обратно на переносы строк
+  return result.value.content.replace(/\*\*/g, "").replace(/<br>/g, "\n");
+});
+
 const copyToClipboard = async () => {
-  if (!result.value?.content) return;
+  if (!plainTextContent.value) return;
   try {
-    await navigator.clipboard.writeText(result.value.content);
+    await navigator.clipboard.writeText(plainTextContent.value);
     copied.value = true;
     setTimeout(() => {
       copied.value = false;
