@@ -245,11 +245,43 @@ const checkStatus = async () => {
       error.value =
         response.result?.content || "Произошла неизвестная ошибка на сервере.";
     }
-  } catch (err) {
+  } catch (err: any) {
+    // Обработка HTTP-ошибок, которые выбросил $fetch
     status.value = "error";
-    error.value =
-      "Не удалось получить статус задачи. Возможно, проблема с сетью или сервером.";
-    console.error(err);
+    console.error("Failed to fetch task status:", err);
+
+    // Проверяем наличие statusCode в объекте ошибки
+    if (err.statusCode) {
+      switch (err.statusCode) {
+        case 404:
+          error.value =
+            "Задача не найдена. Возможно, вы открыли неверную или устаревшую ссылку.";
+          break;
+        case 500:
+          error.value =
+            "Произошла критическая ошибка на сервере. Пожалуйста, попробуйте позже.";
+          break;
+        case 400:
+          error.value = `Некорректный запрос к серверу: ${
+            err.data?.message || "проверьте данные"
+          }.`;
+          break;
+        case 503:
+          error.value = "Сервис перегружен. Пожалуйста, попробуйте позже.";
+          break;
+        default:
+          error.value = `Произошла ошибка сети (код: ${err.statusCode}). Пожалуйста, проверьте ваше подключение.`;
+          break;
+      }
+    } else {
+      // Если statusCode отсутствует, скорее всего, это проблема с сетью (CORS, DNS и т.д.)
+      error.value =
+        "Не удалось связаться с сервером. Проверьте ваше интернет-соединение.";
+    }
+    // Останавливаем интервал, так как произошла окончательная ошибка
+    if (intervalId) {
+      clearInterval(intervalId);
+    }
   }
 };
 
