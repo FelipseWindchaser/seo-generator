@@ -139,7 +139,7 @@ ${originalContent}
 1.  **ОБЪЕМ ТЕКСТА:** Итоговый текст должен быть объемом СТРОГО от 1800 до 2000 символов.
 2.  **КЛЮЧЕВЫЕ СЛОВА:** Все обязательные ключи должны остаться в тексте.
 
-Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев.
+Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев. Cохрани все выделения ключей жирным шрифтом, а если пользователь добавил новые ключевые слова, то выдели их тоже жирным шрифтом.
 `;
 
   try {
@@ -212,8 +212,8 @@ async function generateBaseContent(data: GenerationRequest): Promise<{ title: st
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],
     config: {
       tools: [{urlContext: {}}],
-      temperature: 0.7,
-      maxOutputTokens: 850,
+      temperature: 0.8,
+      maxOutputTokens: 1280,
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -244,7 +244,7 @@ ${baseContent}
 
 ВАЖНО: Итоговый текст должен быть не сильно длиннее исходного. Постарайся уложиться в 2000 символов.
 
-Верни ТОЛЬКО финальный, отредактированный текст.
+Верни ТОЛЬКО финальный, отредактированный текст с ключевыми словами, выделенными жирным шрифтом.
 `;
 
   const result = await genAI.models.generateContent({
@@ -253,7 +253,7 @@ ${baseContent}
     config: {
       tools: [{urlContext: {}}],
       temperature: 0.4,
-      maxOutputTokens: 1024,
+      maxOutputTokens: 1280,
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
