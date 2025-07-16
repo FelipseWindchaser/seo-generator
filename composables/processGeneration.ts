@@ -1,4 +1,6 @@
-import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+// /server/composables/processGeneration.ts
+
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold, type GoogleRpcStatus } from "@google/genai";
 import type {
   Task,
   GenerationRequest,
@@ -8,6 +10,7 @@ import type {
 } from "~/types";
 import { ContentValidator } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
+import { handleGoogleAIError } from "~/server/utils/error-handler";
 
 // --- ИНИЦИАЛИЗАЦИЯ ---
 const { geminiApiKey } = useRuntimeConfig();
@@ -20,6 +23,36 @@ const MAX_CONTENT_LENGTH = 2000;
 function escapeRegex(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+// function handleGoogleAIError(error: any): string {
+//   // Проверяем, содержит ли ошибка структурированные детали от Google API
+//   const rpcStatus = error.cause as GoogleRpcStatus;
+
+//   if (rpcStatus && rpcStatus.code) {
+//     switch (rpcStatus.code) {
+//       // gRPC code 14: UNAVAILABLE
+//       case 14:
+//         return "Серверы модели временно недоступны или перегружены. Пожалуйста, попробуйте снова через несколько минут.";
+//       // gRPC code 8: RESOURCE_EXHAUSTED
+//       case 8:
+//         return "Превышен лимит запросов (квота). Пожалуйста, проверьте ваш тарифный план или попробуйте позже.";
+//       // gRPC code 3: INVALID_ARGUMENT
+//       case 3:
+//         return `Некорректный аргумент в запросе к модели: ${rpcStatus.message}`;
+//       default:
+//         return `Произошла ошибка API (код: ${rpcStatus.code}): ${rpcStatus.message}`;
+//     }
+//   }
+
+//   // Фоллбэк на случай, если структура ошибки другая (как на вашем скриншоте)
+//   if (error.message && error.message.includes('503')) {
+//       return "Серверы модели временно недоступны или перегружены. Пожалуйста, попробуйте снова через несколько минут.";
+//   }
+
+//   // Самый общий фоллбэк
+//   return error.message || "Неизвестная ошибка при обращении к AI модели.";
+// }
+
 
 export function findKeywordExample(content: string, keyword: string): string {
   const contentLower = content.toLowerCase();
@@ -92,25 +125,27 @@ const processTask = async () => {
           `[ProcessTask] CRITICAL ERROR during generation for task ${task.id}:`,
           error
         );
-        const errorMessage =
-          error.message || "Неизвестная критическая ошибка при генерации.";
+        // const errorMessage =
+        //   error.message || "Неизвестная критическая ошибка при генерации.";
+        // await updateTask(task.id, {
+        //   status: "error",
+        //   result: {
+        //     content: errorMessage,
+        //     success: false,
+        //     attempts: 0,
+        //     title: "",
+        //     description: "",
+        //   },
+        // });
+        const errorMessage = handleGoogleAIError(error).statusMessage;
         await updateTask(task.id, {
           status: "error",
-          result: {
-            content: errorMessage,
-            success: false,
-            attempts: 0,
-            title: "",
-            description: "",
-          },
+          result: { content: errorMessage, success: false, attempts: 0, title: "", description: "" },
         });
       }
     }
   } catch (error) {
-    console.error(
-      "[ProcessTask] Failed to fetch or process tasks queue:",
-      error
-    );
+    console.error("[ProcessTask] Failed to fetch or process tasks queue:", error);
   }
 };
 
@@ -124,7 +159,7 @@ export async function runUserRefinement(
     "[Refiner] Starting user refinement step..."
   );
 
-  const systemPrompt = `Ты — высокоточный редактор. Твоя задача — взять текст и запрос на изменение, а затем ВНЕСТИ ТОЛЬКО запрошенное изменение, НЕ НАРУШАЯ исходных правил. Соблюдение правил — твой главный приоритет.`;
+  const systemPrompt = `Ты — высокоточный редактор. Твоя задача — взять текст и запрос на изменение, а затем ВНЕСТИ ТОЛЬКО запрошенное изменение, НЕ НАРУШАЯ исходных правил и не переписывая текст заново, если пользователь не просил этого. Соблюдение правил — твой главный приоритет.`;
 
   const userPromptForLLM = `
 ЗАДАЧА: Аккуратно отредактируй ИСХОДНЫЙ ТЕКСТ в соответствии с ЗАПРОСОМ ПОЛЬЗОВАТЕЛЯ, при этом СТРОГО СОБЛЮДАЯ все КРИТИЧЕСКИЕ ПРАВИЛА.
@@ -139,7 +174,7 @@ ${originalContent}
 1.  **ОБЪЕМ ТЕКСТА:** Итоговый текст должен быть объемом СТРОГО от 1800 до 2000 символов.
 2.  **КЛЮЧЕВЫЕ СЛОВА:** Все обязательные ключи должны остаться в тексте.
 
-Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев. Cохрани все выделения ключей жирным шрифтом, а если пользователь добавил новые ключевые слова, то выдели их тоже жирным шрифтом.
+Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев. Если пользователь добавил новые ключевые слова, то выдели их жирным шрифтом.
 `;
 
   try {
@@ -147,9 +182,8 @@ ${originalContent}
       model: "gemini-2.0-flash",
       contents: [{ role: "user", parts: [{ text: userPromptForLLM }] }],
       config: {
-        tools: [{urlContext: {}}],
         temperature: 0.3,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 800,
         systemInstruction: { parts: [{ text: systemPrompt }] },
       },
     });
@@ -160,13 +194,14 @@ ${originalContent}
       return refinedContent;
     }
     return originalContent;
-  } catch (error) {
+  } catch (error: any) {
     console.error(`[Refiner] FAILED: API error during user refinement.`, error);
-    return originalContent;
+    const { statusCode, statusMessage } = handleGoogleAIError(error);
+    throw createError({ statusCode, statusMessage });
   }
 }
 
-// --- НОВАЯ АРХИТЕКТУРА "ДВА КОНВЕРТА" ---
+// --- НОВАЯ АРХИТЕКТУРА "ГИБКИЙ КАРКАС" ---
 
 function parseLLMResponse(responseText: string): { title: string; content: string } {
     const contentParts = responseText.split("===");
@@ -187,14 +222,14 @@ function parseLLMResponse(responseText: string): { title: string; content: strin
     return { title, content: description };
 }
 
-// ЭТАП 1: Генерация качественной базы без ключей
-async function generateBaseContent(data: GenerationRequest): Promise<{ title: string; content: string }> {
-  console.log("[Generator Stage 1] Generating base content without keywords.");
+// ЭТАП 1: Генерация избыточной базы без ключей
+async function generateOverSizedBaseContent(data: GenerationRequest): Promise<{ title: string; content: string }> {
+  console.log("[Generator Stage 1] Generating oversized base content (2200-2400 chars).");
   const systemPrompt = `Ты — опытный копирайтер. Твоя задача — написать "живой" и убедительный текст для карточки товара, основываясь на его преимуществах. ЗАБУДЬ О SEO И КЛЮЧЕВЫХ СЛОВАХ. Сосредоточься на качестве, пользе для клиента и соблюдении объема.`;
   
   const userPrompt = `
-ЗАДАЧА: Напиши убедительный текст, разделенный на 5-7 логических абзацев.
-КРИТИЧЕСКИ ВАЖНО: Объем текста ОПИСАНИЯ должен быть около 1600-1700 символов. Это строгое требование.
+ЗАДАЧА: Напиши подробный, качественный текст для товара "${data.productName}", разделенный на 5-7 логических абзацев.
+ЦЕЛЕВОЙ ОБЪЕМ: Сгенерируй текст объемом примерно 2000-2400 символов.
 
 ВХОДНЫЕ ДАННЫЕ:
 - Отзывы конкурентов (закрой эти боли): ${data.reviews}
@@ -204,16 +239,15 @@ async function generateBaseContent(data: GenerationRequest): Promise<{ title: st
 ===ЗАГОЛОВОК===
 [яркий, привлекательный заголовок]
 ===ОПИСАНИЕ===
-[текст объемом 1700-1800 символов]
+[текст объемом 2200-2400 символов]
 `;
-
+try {
   const result = await genAI.models.generateContent({
     model: "gemini-2.0-flash",
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],
     config: {
-      tools: [{urlContext: {}}],
-      temperature: 0.8,
-      maxOutputTokens: 1280,
+      temperature: 0.7,
+      maxOutputTokens: 1500,
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -225,12 +259,16 @@ async function generateBaseContent(data: GenerationRequest): Promise<{ title: st
   });
   const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
   return parseLLMResponse(responseText);
+} catch (error) {
+  console.error("[Generator Stage 1] FAILED:", error);
+  throw new Error(handleGoogleAIError(error).statusMessage);
+}
 }
 
 // ЭТАП 2: Хирургическое внедрение ключей
 async function injectKeywords(baseContent: string, data: GenerationRequest): Promise<string> {
   console.log("[Generator Stage 2] Injecting keywords into base content.");
-  const systemPrompt = `Ты — SEO-редактор. Твоя задача — взять готовый текст и АККУРАТНО внедрить в него все ключевые слова из списка. Сохраняй стиль и смысл исходного текста. Не добавляй много новой информации. Твоя цель — чтобы текст после твоих правок прошел SEO-валидацию.`;
+  const systemPrompt = `Ты — SEO-редактор. Твоя задача — взять готовый текст и АККУРАТНО внедрить в него все ключевые слова из списка. Сохраняй стиль и смысл исходного текста. Не добавляй много новой информации. Твоя цель — чтобы текст после твоих правок прошел SEO-валидацию. Абзацы не должны начинаться с ключевых слов.`;
 
   const userPrompt = `
 ОТРЕДАКТИРУЙ ЭТОТ ТЕКСТ:
@@ -239,21 +277,21 @@ ${baseContent}
 ---
 
 ОБЯЗАТЕЛЬНО ВНЕДРИ В НЕГО:
-1.  **Все обязательные ключи:** ${data.requiredKeywords.join(', ')}. Постарайся, чтобы каждое слово встречалось 1-2 раза.
-2.  **Как можно больше необязательных ключей:** ${data.optionalKeywords.join(', ')}.
+1.  **Все обязательные ключи:** ${data.requiredKeywords.join(', ')}. Обязательно следуй тому, чтобы каждое ключевое слово встречалось 1-2 раза. Не используй их больше, чем необходимо. Если несколько ключей используются в качестве названия товара, не используй их в одном предложении и чередуй их между абзацами.
+2.  **Используй как можно больше дополнительных ключей:** ${data.optionalKeywords.join(', ')}.
 
 ВАЖНО: Итоговый текст должен быть не сильно длиннее исходного. Постарайся уложиться в 2000 символов.
 
-Верни ТОЛЬКО финальный, отредактированный текст с ключевыми словами, выделенными жирным шрифтом.
+Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев. Выдели ключевые слова жирным шрифтом.
 `;
 
-  const result = await genAI.models.generateContent({
+  try {
+    const result = await genAI.models.generateContent({
     model: "gemini-2.0-flash",
     contents: [{ role: "user", parts: [{ text: userPrompt }] }],
     config: {
-      tools: [{urlContext: {}}],
       temperature: 0.4,
-      maxOutputTokens: 1280,
+      maxOutputTokens: 1024,
       safetySettings: [
         { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -264,6 +302,10 @@ ${baseContent}
     },
   });
   return result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || baseContent;
+} catch (error) {
+  console.error("[Generator Stage 2] FAILED:", error);
+    throw new Error(handleGoogleAIError(error).statusMessage);
+}
 }
 
 
@@ -271,15 +313,19 @@ ${baseContent}
 async function runGenerationWithValidation(
   data: GenerationRequest
 ): Promise<GenerationResult> {
-  console.log(`[Generator] Starting 2-stage generation process...`);
+  console.log(`[Generator] Starting 'Flexible Frame' generation process...`);
   
-  // 1. Генерируем базу
-  const { title, content: baseContent } = await generateBaseContent(data);
+  // 1. Генерируем избыточную базу
+  const { title, content: oversizedBaseContent } = await generateOverSizedBaseContent(data);
 
-  // 2. Внедряем ключи
-  let contentWithKeywords = await injectKeywords(baseContent, data);
+  // 2. "Умная" обрезка каркаса до идеального размера для внедрения
+  const BASE_CONTENT_TARGET_LENGTH = 1800;
+  const { newContent: baseContentFrame } = intelligentTruncate(oversizedBaseContent, BASE_CONTENT_TARGET_LENGTH, []);
   
-  // 3. Финальная "мягкая" обрезка
+  // 3. Внедряем ключи в идеально подогнанный каркас
+  let contentWithKeywords = await injectKeywords(baseContentFrame, data);
+  
+  // 4. Финальная "косметическая" обрезка
   let processingLog: { added: string[], removed: string[] } = { added: [], removed: [] };
   if (contentWithKeywords.length > MAX_CONTENT_LENGTH) {
     const allKeywords = [...data.requiredKeywords, ...data.optionalKeywords];
@@ -288,7 +334,7 @@ async function runGenerationWithValidation(
     processingLog.removed.push(...truncationResult.removedSentences);
   }
 
-  // 4. Финальная валидация
+  // 5. Финальная валидация
   console.log("[Generator] Performing final validation...");
   const validationResult = await validator.validate(
     contentWithKeywords,
@@ -304,7 +350,6 @@ async function runGenerationWithValidation(
   }
 
   const additionalChecks = checkAdditionalRequirements(contentWithKeywords, data);
-  // Для пользователя это одна попытка, даже если внутри было 2 вызова LLM
   return prepareFinalResult(title, contentWithKeywords, validationResult, additionalChecks, 1, isSuccess, processingLog);
 }
 

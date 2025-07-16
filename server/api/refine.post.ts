@@ -5,6 +5,7 @@ import { defineEventHandler, readBody, createError } from 'h3';
 import { ContentValidator } from '~/server/utils/content-validator';
 import { runUserRefinement, prepareFinalResult, checkAdditionalRequirements } from '~/composables/processGeneration';
 import type { GenerationRequest, GenerationResult } from '~/types';
+import { handleGoogleAIError } from "~/server/utils/error-handler";
 
 // Эта схема описывает объект, который мы СОХРАНИЛИ в Redis
 // и который приходит с фронтенда в поле `generationData`.
@@ -62,8 +63,8 @@ export default defineEventHandler(async (event) => {
   } catch (error: any) {
     console.error(`[API /refine] Error:`, error);
     if (error instanceof z.ZodError) {
-      throw createError({ statusCode: 400, statusMessage: 'Validation error', data: error.errors });
+      throw createError({ statusCode: handleGoogleAIError(error).statusCode, statusMessage: handleGoogleAIError(error).statusMessage, data: error.errors });
     }
-    throw createError({ statusCode: 500, statusMessage: 'Internal Server Error', data: { message: error.message } });
+    throw createError({ statusCode: handleGoogleAIError(error).statusCode, statusMessage: handleGoogleAIError(error).statusMessage, data: { message: error.message } });
   }
 });

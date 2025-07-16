@@ -1,41 +1,39 @@
+<!-- /pages/tasks/[id].vue -->
 <template>
   <div class="min-h-screen bg-gray-50 py-8">
     <div class="max-w-4xl mx-auto px-4">
       <h1 class="text-3xl font-bold text-center text-gray-900 mb-8">
-        🚀 SEO Генератор для Wildberries taskId: {{ id }}
+        Результат генерации
       </h1>
-
       <div class="bg-white rounded-lg shadow-lg p-6">
-        <!-- v-if="!taskId" -->
-
         <GenerationResult
           v-if="taskId"
           :task-id="taskId"
-          @reset="resetAndNavigateToHome"
+          @reset="handleReset"
         />
       </div>
     </div>
   </div>
 </template>
-<!-- old mvp -->
+
 <script setup lang="ts">
 import type { GenerationRequest } from "~/types";
 
-const loading = ref(false);
-const taskId = ref<string>("");
 const route = useRoute();
 const router = useRouter();
-const id = route.params.id;
-console.log(id);
-const resetAndNavigateToHome = () => {
-  router.push("/"); // Перенаправляем на главную страницу для новой генерации
-};
+// Получаем ID задачи из параметров маршрута
+const taskId = computed(() => route.params.id as string);
 
-const getTask = async () => {
-  taskId.value = id as string;
+// ИЗМЕНЕНО: Обработчик теперь принимает данные для повтора
+const handleReset = (retryData: GenerationRequest | null) => {
+  if (retryData) {
+    // Если есть данные, перенаправляем с query-параметром
+    console.log(`Retrying with data for task: ${taskId.value}`);
+    router.push({ path: "/", query: { retry_task_id: taskId.value } });
+  } else {
+    // Если данных нет, просто перенаправляем на главную
+    console.log("Resetting to a new form.");
+    router.push("/");
+  }
 };
-
-onMounted(() => {
-  getTask();
-});
 </script>

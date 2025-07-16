@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { defineEventHandler, readBody, createError } from 'h3';
 import { GoogleGenAI } from '@google/genai';
+import { handleGoogleAIError } from "~/server/utils/error-handler";
 
 // --- Инициализация ---
 const { geminiApiKey } = useRuntimeConfig();
@@ -14,6 +15,23 @@ const requestSchema = z.object({
   productName: z.string().min(1, { message: "Название товара обязательно" }),
   productUrl: z.string().url({ message: "Требуется корректный URL" }).optional(),
 });
+
+/**
+ * Безопасно извлекает JSON из ответа LLM,
+ * очищая его от возможной Markdown-разметки.
+ * @param text Ответ от LLM.
+ * @returns Распарсенный объект или null в случае ошибки.
+ */
+function extractJsonFromText(text: string): any | null {
+  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+  const jsonString = match ? match[1] : text;
+  try {
+    return JSON.parse(jsonString);
+  } catch (e) {
+    console.error("Failed to parse JSON from LLM response:", e);
+    return null;
+  }
+}
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event);
@@ -71,9 +89,11 @@ ${productUrl ? `(Прочитай содержимое по ссылке и ис
 
   } catch (error: any) {
     console.error("[API /keywords/generate] Error:", error);
-    throw createError({
-      statusCode: 500,
-      statusMessage: "Не удалось сгенерировать ключевые слова. Модель вернула некорректный ответ.",
-    });
+    
+    // ИСПОЛЬЗУЕМ НАШ НОВЫЙ ХЕЛПЕР, который возвращает готовый объект
+    const errorResponse = handleGoogleAIError(error);
+    
+    // Выбрасываем ошибку с динамическим кодом и сообщением
+    throw createError(errorResponse);
   }
 });

@@ -16,7 +16,7 @@
       <h3 class="text-lg font-medium text-red-800 mb-2">Ошибка генерации</h3>
       <p class="text-red-600">{{ error }}</p>
       <button
-        @click="$emit('reset')"
+        @click="handleRetry"
         class="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
       >
         Попробовать снова
@@ -196,7 +196,7 @@
           {{ copied ? "✅ Скопировано!" : "📋 Скопировать текст" }}
         </button>
         <button
-          @click="$emit('reset')"
+          @click="$emit('reset', null)"
           class="flex-1 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
         >
           Создать новое описание
@@ -214,7 +214,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  reset: [];
+  (e: "reset", payload: GenerationRequest | null): void;
 }>();
 
 const status = ref<"processing" | "completed" | "error">("processing");
@@ -229,28 +229,94 @@ const refinementError = ref("");
 const isSaving = ref(false);
 const saveSuccessMessage = ref("");
 
+// const checkStatus = async () => {
+//   try {
+//     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
+//     if (response.status === "completed") {
+//       status.value = "completed";
+//       result.value = response?.result || null;
+//       originalRequest.value = response?.request || null;
+//       if (!result.value) {
+//         status.value = "error";
+//         error.value = "Задача завершена, но результат генерации отсутствует.";
+//       }
+//     } else if (response.status === "error") {
+//       status.value = "error";
+//       error.value =
+//         response.result?.content || "Произошла неизвестная ошибка на сервере.";
+//     }
+//   } catch (err: any) {
+//     // Обработка HTTP-ошибок, которые выбросил $fetch
+//     status.value = "error";
+//     console.error("Failed to fetch task status:", err);
+
+//     // Проверяем наличие statusCode в объекте ошибки
+//     if (err.statusCode) {
+//       switch (err.statusCode) {
+//         case 404:
+//           error.value =
+//             "Задача не найдена. Возможно, вы открыли неверную или устаревшую ссылку.";
+//           break;
+//         case 500:
+//           error.value =
+//             "Произошла критическая ошибка на сервере. Пожалуйста, попробуйте позже.";
+//           break;
+//         case 400:
+//           error.value = `Некорректный запрос к серверу: ${
+//             err.data?.message || "проверьте данные"
+//           }.`;
+//           break;
+//         // case 503:
+//         //   error.value = "Сервис перегружен. Пожалуйста, попробуйте позже.";
+//         //   break;
+//         default:
+//           error.value = `Произошла ошибка сети (код: ${err.statusCode}). Пожалуйста, проверьте ваше подключение.`;
+//           break;
+//       }
+//     } else {
+//       // Если statusCode отсутствует, скорее всего, это проблема с сетью (CORS, DNS и т.д.)
+//       error.value =
+//         "Не удалось связаться с сервером. Проверьте ваше интернет-соединение.";
+//     }
+//     // Останавливаем интервал, так как произошла окончательная ошибка
+//     if (intervalId) {
+//       clearInterval(intervalId);
+//     }
+//   }
+// };
 const checkStatus = async () => {
   try {
     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
+
+    // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
+    // Всегда обновляем originalRequest, если он пришел с сервера.
+    // Это гарантирует, что у нас всегда будут данные для повторной попытки.
+    if (response && response.request) {
+      originalRequest.value = response.request;
+      console.log(
+        "[checkStatus] Original request data has been updated/confirmed."
+      );
+    }
+
+    // Теперь обрабатываем статус задачи
     if (response.status === "completed") {
       status.value = "completed";
-      result.value = response?.result || null;
-      originalRequest.value = response?.request || null;
+      result.value = response.result || null;
       if (!result.value) {
         status.value = "error";
-        error.value = "Задача завершена, но результат генерации отсутствует.";
+        error.value = "Задача завершена, но результат генерации пуст.";
       }
     } else if (response.status === "error") {
       status.value = "error";
       error.value =
-        response.result?.content || "Произошла неизвестная ошибка на сервере.";
+        response.result?.content ||
+        "Произошла неизвестная ошибка в процессе генерации.";
     }
+    // Если статус 'processing', мы ничего не делаем, просто ждем следующего вызова.
   } catch (err: any) {
-    // Обработка HTTP-ошибок, которые выбросил $fetch
     status.value = "error";
     console.error("Failed to fetch task status:", err);
 
-    // Проверяем наличие statusCode в объекте ошибки
     if (err.statusCode) {
       switch (err.statusCode) {
         case 404:
@@ -266,23 +332,28 @@ const checkStatus = async () => {
             err.data?.message || "проверьте данные"
           }.`;
           break;
-        case 503:
-          error.value = "Сервис перегружен. Пожалуйста, попробуйте позже.";
-          break;
         default:
           error.value = `Произошла ошибка сети (код: ${err.statusCode}). Пожалуйста, проверьте ваше подключение.`;
           break;
       }
     } else {
-      // Если statusCode отсутствует, скорее всего, это проблема с сетью (CORS, DNS и т.д.)
       error.value =
         "Не удалось связаться с сервером. Проверьте ваше интернет-соединение.";
     }
-    // Останавливаем интервал, так как произошла окончательная ошибка
+
     if (intervalId) {
       clearInterval(intervalId);
     }
   }
+};
+
+const handleRetry = () => {
+  console.log("--- [handleRetry] CLICKED ---");
+  console.log(
+    "Value of originalRequest at the moment of retry:",
+    originalRequest.value
+  );
+  emit("reset", originalRequest.value);
 };
 
 const requiredKeywordsList = computed(() => {

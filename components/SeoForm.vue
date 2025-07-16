@@ -264,6 +264,7 @@ import type { GenerationRequest } from "~/types";
 
 const props = defineProps<{
   loading: boolean;
+  initialData?: GenerationRequest | null;
 }>();
 
 const emit = defineEmits<{
@@ -279,10 +280,15 @@ const form = reactive({
   canChangeVisuals: false,
 });
 
-// Состояние для ключей и УТП
-const requiredKeywords = ref<string[]>([]);
-const optionalKeywords = ref<string[]>([]);
-const uspText = ref("");
+// ИЗМЕНЕНО: Инициализируем ref-массивы напрямую из props
+const requiredKeywords = ref<string[]>(
+  props.initialData?.requiredKeywords || []
+);
+const optionalKeywords = ref<string[]>(
+  props.initialData?.optionalKeywords || []
+);
+// Для УТП оставляем ref<string>, так как это textarea
+const uspText = ref(props.initialData?.usp?.join("\n") || "");
 
 // Состояние для генератора ключей
 const isGeneratingKeywords = ref(false);
@@ -373,6 +379,42 @@ const generateKeywords = async () => {
     isGeneratingKeywords.value = false;
   }
 };
+
+// --- НОВАЯ ФУНКЦИЯ ДЛЯ ЗАПОЛНЕНИЯ ФОРМЫ ---
+const populateForm = (data: GenerationRequest | null | undefined) => {
+  if (data) {
+    console.log("Populating form with initial data:", data);
+    form.productName = data.productName || "";
+    form.productUrl = data.productUrl || "";
+    form.reviews = data.reviews || "";
+    form.adsPlanned = data.adsPlanned || false;
+    form.canChangeVisuals = data.canChangeVisuals || false;
+
+    requiredKeywords.value = data.requiredKeywords || [];
+    optionalKeywords.value = data.optionalKeywords || [];
+    uspText.value = data.usp?.join("\n") || "";
+  } else {
+    // Логика для сброса формы, если нужно
+    console.log("Resetting form to empty state.");
+    form.productName = "";
+    form.productUrl = "";
+    form.reviews = "";
+    form.adsPlanned = false;
+    form.canChangeVisuals = false;
+    requiredKeywords.value = [];
+    optionalKeywords.value = [];
+    uspText.value = "";
+  }
+};
+
+// --- НОВЫЙ БЛОК: СЛЕЖЕНИЕ ЗА ИЗМЕНЕНИЯМИ PROPS ---
+watch(
+  () => props.initialData,
+  (newData) => {
+    populateForm(newData);
+  },
+  { immediate: true }
+); // immediate: true вызовет обработчик сразу при монтировании
 
 // Добавление ключа
 const addKeyword = (keyword: string, type: "required" | "optional") => {
