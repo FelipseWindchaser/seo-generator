@@ -86,7 +86,7 @@ interface SentenceInfo {
       currentLength -= sentence.text.length;
     }
   
-    console.log(`[Trimmer] Removed ${removedSentencesLog.length} sentences.`);
+    console.log(`[Trimmer] Removed ${removedSentencesLog.length} sentences. Removed sentences: ${removedSentencesLog.join(', ')}`);
   
     const newParagraphs = paragraphs.map(para => {
       return splitIntoSentences(para)
