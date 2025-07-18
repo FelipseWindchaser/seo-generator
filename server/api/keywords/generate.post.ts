@@ -3,27 +3,37 @@
 import { z } from 'zod';
 import { defineEventHandler, readValidatedBody, createError } from 'h3';
 // ИМПОРТИРУЕМ НАШУ НОВУЮ ЦЕПОЧКУ
-import { keywordGeneratorChain } from '~/server/services/langchain.service';
+import { keywordGeneratorChain, ModelProvider } from '~/server/services/langchain.service';
 import { handleGoogleAIError } from "~/server/utils/error-handler";
 
 // Схема валидации для входящего запроса (остается без изменений)
 const requestSchema = z.object({
   productName: z.string().min(1, { message: "Название товара обязательно" }),
   productUrl: z.string().url({ message: "Требуется корректный URL" }).optional(),
+  modelProvider: z.nativeEnum(ModelProvider).optional(),
 });
+
+type KeywordResult = {
+  requiredKeywords: string[];
+  optionalKeywords: string[];
+};
 
 export default defineEventHandler(async (event) => {
   try {
     // 1. Валидируем входящие данные
-    const { productName, productUrl } = await readValidatedBody(event, (body) => requestSchema.parse(body));
+    const { productName, productUrl, modelProvider } = await readValidatedBody(event, (body) => requestSchema.parse(body));
 
     // 2. ВЫЗЫВАЕМ ЦЕПОЧКУ LANGCHAIN
-    console.log(`[API /keywords/generate] Invoking LangChain keyword generator for "${productName}"...`);
+    console.log(`[API /keywords/generate] Invoking LangChain with model: ${modelProvider || 'default (Gemini)'}...`);
     
-    const keywords = await keywordGeneratorChain.invoke({
-        productName,
-        productUrl: productUrl || "", // Передаем URL или пустую строку
-    });
+     // ИСПРАВЛЕНО: Передаем modelProvider в invoke.
+    // Если он не пришел с фронтенда, используем Gemini по умолчанию.
+    const keywords = (await keywordGeneratorChain.invoke({
+      productName,
+      productUrl: productUrl || "",
+      // Передаем modelProvider, устанавливая значение по умолчанию
+      modelProvider: modelProvider || ModelProvider.GEMINI,
+  })) as KeywordResult;
 
     // 3. Проверяем, что результат соответствует ожиданиям
     if (!keywords.requiredKeywords || !keywords.optionalKeywords) {

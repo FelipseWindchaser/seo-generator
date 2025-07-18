@@ -1,6 +1,29 @@
 <!-- /components/GenerationForm.vue -->
 <template>
   <form @submit.prevent="onSubmit" class="space-y-6">
+    <!-- НОВОЕ ПОЛЕ: Выбор модели -->
+    <div>
+      <label
+        for="modelProvider"
+        class="block text-sm font-medium text-gray-700"
+      >
+        AI Модель
+      </label>
+      <select
+        id="modelProvider"
+        v-model="form.modelProvider"
+        class="mt-1 block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+      >
+        <option :value="ModelProvider.GEMINI">Google Gemini Flash</option>
+        <option :value="ModelProvider.DEEPSEEK">DeepSeek Chat</option>
+        <option :value="ModelProvider.GROQ">Groq</option>
+      </select>
+      <p class="mt-1 text-sm text-gray-500">
+        Выберите модель для генерации. DeepSeek может быть креативнее, Gemini -
+        быстрее.
+      </p>
+    </div>
+
     <!-- НОВОЕ ПОЛЕ: Название товара -->
     <div>
       <label for="productName" class="block text-sm font-medium text-gray-700"
@@ -244,7 +267,11 @@
       class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-300 disabled:cursor-not-allowed"
     >
       <LoadingSpinner v-if="loading" class="mr-2" />
-      {{ loading ? "Генерируем..." : "Сгенерировать SEO-описание" }}
+      {{
+        loading
+          ? `Генерируем с ${form.modelProvider}...`
+          : "Сгенерировать SEO-описание"
+      }}
     </button>
 
     <!-- Ошибки валидации -->
@@ -261,6 +288,7 @@
 
 <script setup lang="ts">
 import type { GenerationRequest } from "~/types";
+import { ModelProvider } from "~/server/services/langchain.service";
 
 const props = defineProps<{
   loading: boolean;
@@ -278,6 +306,7 @@ const form = reactive({
   reviews: "",
   adsPlanned: false,
   canChangeVisuals: false,
+  modelProvider: ModelProvider.GEMINI,
 });
 
 // ИЗМЕНЕНО: Инициализируем ref-массивы напрямую из props
@@ -369,6 +398,7 @@ const generateKeywords = async () => {
       body: {
         productName: form.productName,
         productUrl: form.productUrl,
+        modelProvider: form.modelProvider,
       },
     });
     generatedKeywords.value = response;
@@ -389,7 +419,7 @@ const populateForm = (data: GenerationRequest | null | undefined) => {
     form.reviews = data.reviews || "";
     form.adsPlanned = data.adsPlanned || false;
     form.canChangeVisuals = data.canChangeVisuals || false;
-
+    form.modelProvider = data.modelProvider || ModelProvider.GEMINI;
     requiredKeywords.value = data.requiredKeywords || [];
     optionalKeywords.value = data.optionalKeywords || [];
     uspText.value = data.usp?.join("\n") || "";
@@ -401,6 +431,7 @@ const populateForm = (data: GenerationRequest | null | undefined) => {
     form.reviews = "";
     form.adsPlanned = false;
     form.canChangeVisuals = false;
+    form.modelProvider = ModelProvider.GEMINI;
     requiredKeywords.value = [];
     optionalKeywords.value = [];
     uspText.value = "";

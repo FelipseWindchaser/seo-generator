@@ -3,9 +3,10 @@
 import type { GenerationRequest } from "~/types";
 import { createTask } from "~/server/utils/redis";
 import { z } from "zod";
+// ИМПОРТИРУЕМ ENUM, ЧТОБЫ ZOD МОГ ЕГО ИСПОЛЬЗОВАТЬ
+import { ModelProvider } from '~/server/services/langchain.service';
 
 // --- ИСПРАВЛЕННАЯ СХЕМА ВАЛИДАЦИИ ---
-// Адаптирована под requiredKeywords и optionalKeywords
 const requestSchema = z.object({
   productName: z.string().min(1),
   productUrl: z
@@ -15,31 +16,30 @@ const requestSchema = z.object({
       message: "URL должен быть с Wildberries",
     }),
   
-  // Новое правило для обязательных ключей
   requiredKeywords: z.array(z.string().min(1, "Обязательный ключ не может быть пустым"))
-    .length(10, "Требуется ровно 10 обязательных ключей"), // .length(10) проверяет точное количество
+    .length(10, "Требуется ровно 10 обязательных ключей"),
 
-  // Новое правило для необязательных ключей
   optionalKeywords: z.array(z.string().min(1, "Необязательный ключ не может быть пустым"))
-    .max(10, "Не более 10 необязательных ключей"), // .max(10) проверяет верхний лимит
+    .max(10, "Не более 10 необязательных ключей"),
 
-  // Правила для остальных полей остаются
   reviews: z.string().min(20, "Добавьте отзывы конкурентов"),
   usp: z.array(z.string().min(1)).min(2, "Минимум 2 УТП"),
   adsPlanned: z.boolean(),
   canChangeVisuals: z.boolean(),
+
+  // ДОБАВЛЕНО: Теперь Zod знает об этом поле и не будет его удалять.
+  modelProvider: z.nativeEnum(ModelProvider).optional(),
 });
 
 export default defineEventHandler(async (event) => {
   try {
     const body = await readBody(event);
-    // Валидируем тело запроса по новой схеме
     const validatedData = requestSchema.parse(body) as GenerationRequest;
 
-    // Создаём задачу с новыми данными
+    // Теперь validatedData будет содержать modelProvider, если он был в запросе
     const taskId = await createTask(validatedData);
 
-    console.log(`[API /generate] Task ${taskId} created successfully.`);
+    console.log(`[API /generate] Task ${taskId} created successfully with model: ${validatedData.modelProvider || 'default'}.`);
 
     return {
       taskId,

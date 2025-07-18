@@ -1,5 +1,7 @@
 // /types/index.ts
 
+import type { ModelProvider } from "~/server/services/langchain.service";
+
 // --- Типы для инструкций и запросов ---
 
 /**
@@ -24,6 +26,7 @@ export interface GenerationRequest {
   usp: string[];
   adsPlanned: boolean;
   canChangeVisuals: boolean;
+  modelProvider?: ModelProvider;
 }
 
 

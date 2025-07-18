@@ -11,7 +11,7 @@ import { ContentValidator } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
 import { handleGoogleAIError } from "~/server/utils/error-handler";
 
-import { seoGeneratorChain, refinementChain } from "~/server/services/langchain.service";
+import { seoGeneratorChain, refinementChain, ModelProvider } from "~/server/services/langchain.service";
 
 // --- ИНИЦИАЛИЗАЦИЯ ---
 const validator = new ContentValidator();
@@ -109,17 +109,18 @@ const processTask = async () => {
 export async function runUserRefinement(
   originalContent: string,
   userPrompt: string,
-  data: GenerationRequest
+  data: GenerationRequest // Объект `data` содержит все исходные правила, включая modelProvider
 ): Promise<string> {
-  console.log(
-    "[Refiner] Starting user refinement step..."
-  );
+  console.log(`[Refiner] Starting LangChain refinement with model: ${data.modelProvider || 'default'}...`);
 
   try {
-    // Вызываем нашу новую цепочку для доработки
+    // ИСПРАВЛЕНО: Передаем modelProvider из объекта `data`
     const refinedContent = await refinementChain.invoke({
         originalContent,
         userPrompt,
+        // Устанавливаем провайдера модели, используя данные из исходного запроса,
+        // или Gemini по умолчанию, если он не был указан.
+        modelProvider: data.modelProvider || ModelProvider.GEMINI, 
     });
     return refinedContent || originalContent;
   } catch (error: any) {
@@ -132,15 +133,22 @@ export async function runUserRefinement(
 
 // --- ГЛАВНАЯ ЛОГИКА (ИСПОЛЬЗУЕТ LANGCHAIN) ---
 async function runGenerationWithValidation(data: GenerationRequest): Promise<GenerationResult> {
-  console.log(`[Generator] Starting LangChain 'Flexible Frame' generation process...`);
+  const modelToUse = data.modelProvider || ModelProvider.GEMINI;
+  console.log(`[Generator] Starting LangChain process with model: ${modelToUse}...`);
   
   try {
     // 1. ВЫЗЫВАЕМ ВСЮ ЦЕПОЧКУ ОДНОЙ КОМАНДОЙ
     // Мы передаем `data` через `configurable`, чтобы она была доступна на всех шагах.
     // ВАЖНО: LangChain пока не возвращает заголовок, используем заглушку.
+   
     const contentWithKeywords = await seoGeneratorChain.invoke(
-      data, 
-      { configurable: { originalRequest: data } }
+      data, // Основные данные для промптов
+      {
+        // Конфигурация, доступная на всех шагах
+        configurable: {
+          modelProvider: modelToUse,
+        }
+      }
     );
     const title = data.productName; // Используем имя продукта как временный заголовок
 

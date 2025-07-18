@@ -23,7 +23,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.16.0",
     "@langchain/core": "^0.3.64",
+    "@langchain/deepseek": "^0.1.0",
     "@langchain/google-genai": "^0.2.15",
+    "@langchain/groq": "^0.2.3",
     "@pinia/nuxt": "^0.5.1",
     "@vueuse/nuxt": "^10.7.0",
     "az": "^0.2.3",

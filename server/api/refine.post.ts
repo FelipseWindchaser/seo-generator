@@ -6,6 +6,7 @@ import { ContentValidator } from '~/server/utils/content-validator';
 import { runUserRefinement, prepareFinalResult, checkAdditionalRequirements } from '~/composables/processGeneration';
 import type { GenerationRequest, GenerationResult } from '~/types';
 import { handleGoogleAIError } from "~/server/utils/error-handler";
+import { ModelProvider } from '../services/langchain.service';
 
 // Эта схема описывает объект, который мы СОХРАНИЛИ в Redis
 // и который приходит с фронтенда в поле `generationData`.
@@ -19,6 +20,7 @@ const generationRequestFromClientSchema = z.object({
   usp: z.array(z.string()),
   adsPlanned: z.boolean(),
   canChangeVisuals: z.boolean(),
+  modelProvider: z.nativeEnum(ModelProvider).optional(),
 });
 
 // Эта схема описывает ВСЕ тело запроса на /api/refine

@@ -1,35 +1,79 @@
 // /server/services/langchain.service.ts
 
-// ИСПРАВЛЕНО: Импортируем ChatPromptTemplate
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import {
   RunnableSequence,
   RunnablePassthrough,
+  RunnableLambda,
 } from "@langchain/core/runnables";
 import { StringOutputParser } from "@langchain/core/output_parsers";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+// ИМПОРТИРУЕМ ОБЕ МОДЕЛИ
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { SystemMessage, HumanMessage } from "@langchain/core/messages";
-
+import { ChatDeepSeek } from "@langchain/deepseek";
+import { ChatGroq } from "@langchain/groq";
+import type { GenerationRequest } from "~/types";
 import { z } from "zod";
 
-import type { GenerationRequest } from "~/types";
+// --- 1. ФАБРИКА МОДЕЛЕЙ ---
 
-// --- 1. ИНИЦИАЛИЗАЦИЯ МОДЕЛЕЙ (без изменений) ---
-const creativeModel = new ChatGoogleGenerativeAI({
-  model: "gemini-2.0-flash",
-  temperature: 0.7,
-  maxOutputTokens: 2048,
-});
+// Создаем Enum для типобезопасного выбора модели
+export enum ModelProvider {
+  GEMINI = "gemini-2.0-flash",
+  DEEPSEEK = "deepseek-chat",
+  GROQ = "llama3-70b-8192",
+}
 
-const editorModel = new ChatGoogleGenerativeAI({
-  model: "gemini-2.0-flash",
-  temperature: 0.3,
-  maxOutputTokens: 1024,
-});
+// Функция-фабрика, которая возвращает нужный экземпляр модели
+function getModel(
+  provider: ModelProvider,
+  config: { temperature: number; maxOutputTokens?: number }
+): BaseChatModel {
+  switch (provider) {
+    case ModelProvider.DEEPSEEK:
+      console.log(
+        `[LangChain Service] Initializing Deepseek model: ${provider}`
+      );
+      return new ChatDeepSeek({
+        model: provider,
+        temperature: config.temperature,
+        maxTokens: config.maxOutputTokens,
+        // apiKey берется из переменной окружения DEEPSEEK_API_KEY
+      });
 
-const structuredOutputModel = new ChatGoogleGenerativeAI({
-  model: "gemini-2.0-flash",
-  temperature: 0.1,
+    // НОВЫЙ БЛОК
+    case ModelProvider.GROQ:
+      console.log(`[LangChain Service] Initializing Groq model: ${provider}`);
+      return new ChatGroq({
+        model: provider,
+        temperature: config.temperature,
+        maxTokens: config.maxOutputTokens,
+        // apiKey берется из переменной окружения GROQ_API_KEY
+      });
+
+    case ModelProvider.GEMINI:
+    default:
+      console.log(`[LangChain Service] Initializing Gemini model: ${provider}`);
+      return new ChatGoogleGenerativeAI({
+        model: provider,
+        temperature: config.temperature,
+        maxOutputTokens: config.maxOutputTokens,
+        // apiKey берется из переменной окружения GOOGLE_API_KEY
+      });
+  }
+}
+
+const keywordsSchema = z.object({
+  requiredKeywords: z
+    .array(z.string())
+    .describe(
+      "Список из 15 самых важных, высокочастотных однословных ключей, точно идентифицирующих товар."
+    ),
+  optionalKeywords: z
+    .array(z.string())
+    .describe(
+      "Список из 15 однословных ключей, описывающих второстепенные характеристики, технологии или преимущества."
+    ),
 });
 
 // --- 2. ШАБЛОНЫ ПРОМПТОВ (ИСПРАВЛЕНО: используем ChatPromptTemplate) ---
@@ -38,7 +82,7 @@ const structuredOutputModel = new ChatGoogleGenerativeAI({
 const fillerGeneratorPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    "Ты — опытный копирайтер. Твоя задача — написать 'живой', подробный и убедительный текст для карточки товара, основываясь на его преимуществах. ЗАБУДЬ О SEO и КЛЮЧЕВЫХ СЛОВАХ. Сосредоточься на качестве и пользе для клиента. Верни ТОЛЬКО текст описания, без заголовка и разделителей.",
+    "Ты — опытный копирайтер. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — написать 'живой', подробный и убедительный текст для карточки товара, основываясь на его преимуществах. ЗАБУДЬ О SEO и КЛЮЧЕВЫХ СЛОВАХ. Сосредоточься на качестве и пользе для клиента. Верни ТОЛЬКО текст описания, без заголовка и разделителей.",
   ],
   [
     "human",
@@ -54,7 +98,7 @@ const fillerGeneratorPrompt = ChatPromptTemplate.fromMessages([
 const keywordInjectorPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    "Ты — умный SEO-редактор. Твоя задача — взять готовый текст и АККУРАТНО внедрить в него ключевые слова, следуя правилу 'перевернутой пирамиды'. Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев. Выдели жирным шрифтом все внедренные ключевые слова.",
+    "Ты — умный SEO-редактор. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — взять готовый текст и АККУРАТНО внедрить в него ключевые слова, следуя правилу 'перевернутой пирамиды' - больше всего ключей в первом абзаце, меньше во втором, в третьем абзаце - еще меньше и так далее. Верни ТОЛЬКО полный, исправленный текст описания без заголовков и комментариев. Выдели жирным шрифтом все внедренные ключевые слова.",
   ],
   [
     "human",
@@ -73,7 +117,7 @@ const keywordInjectorPrompt = ChatPromptTemplate.fromMessages([
 const userRefinementPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    "Ты — высокоточный редактор. Твоя задача — взять текст и запрос на изменение, а затем ВНЕСТИ ТОЛЬКО запрошенное изменение, НЕ НАРУШАЯ исходных правил...",
+    "Ты — высокоточный редактор. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — взять текст и запрос на изменение, а затем ВНЕСТИ ТОЛЬКО запрошенное изменение, НЕ НАРУШАЯ исходных правил...",
   ],
   [
     "human",
@@ -93,18 +137,18 @@ const userRefinementPrompt = ChatPromptTemplate.fromMessages([
   ],
 ]);
 
-// --- 3. СБОРКА ЦЕПОЧКИ (CHAIN) ---
-
 // Цепочка для Этапа 1: Генерация "наполнителя"
 const fillerChain = RunnableSequence.from([
-  // Форматируем входные данные для промпта
-  (data: GenerationRequest) => ({
-    productName: data.productName,
-    reviews: data.reviews,
-    usp: data.usp.join(", "),
-  }),
-  fillerGeneratorPrompt, // Этот шаблон уже создает массив сообщений
-  creativeModel, // Модель получает готовый массив
+  // Входные данные (data) уже содержат все необходимое
+  fillerGeneratorPrompt,
+  (promptValue, config) => {
+    // ИСПРАВЛЕНО: Берем modelProvider из `config`, который передается из invoke
+    const model = getModel(config.configurable.modelProvider, {
+      temperature: 0.7,
+      maxOutputTokens: 2048,
+    });
+    return model.invoke(promptValue);
+  },
   new StringOutputParser(),
 ]);
 
@@ -116,15 +160,17 @@ const injectorChain = RunnableSequence.from([
     requiredKeywords: input.originalRequest.requiredKeywords.join(", "),
     optionalKeywords: input.originalRequest.optionalKeywords.join(", "),
   }),
-  keywordInjectorPrompt, // Этот шаблон уже создает массив сообщений
-  editorModel, // Модель получает готовый массив
+  keywordInjectorPrompt,
+  (promptValue, config) => {
+    // ИСПРАВЛЕНО: Берем modelProvider из `config`
+    const model = getModel(config.configurable.modelProvider, {
+      temperature: 0.3,
+      maxOutputTokens: 1024,
+    });
+    return model.invoke(promptValue);
+  },
   new StringOutputParser(),
 ]);
-
-const keywordsSchema = z.object({
-  requiredKeywords: z.array(z.string()).describe("..."),
-  optionalKeywords: z.array(z.string()).describe("..."),
-});
 
 // Основная цепочка, которая объединяет все шаги
 export const seoGeneratorChain = RunnableSequence.from([
@@ -135,32 +181,154 @@ export const seoGeneratorChain = RunnableSequence.from([
   injectorChain,
 ]);
 
-export const refinementChain = userRefinementPrompt
-  .pipe(editorModel)
-  .pipe(new StringOutputParser());
+// Цепочка для генерации ключевых слов
+// export const keywordGeneratorChain = RunnableSequence.from([
+//     (input: { productName: string; productUrl?: string, modelProvider: ModelProvider }) => ({
+//         productName: input.productName,
+//         productUrl: input.productUrl || "",
+//     }),
+//     ChatPromptTemplate.fromMessages([
+//         ["system", `Ты — профессиональный SEO-аналитик. Твоя задача — проанализировать название товара и составить семантическое ядро из 30 однословных ключей, разделив их на две категории по 15 ключей: обязательные и дополнительные. Верни результат в виде JSON-объекта, соответствующего предоставленной схеме.`],
+//         ["human", `Проанализируй товар с названием: "{productName}".\n{productUrl ? "(Используй содержимое по ссылке для дополнительного контекста: {productUrl})" : ""}`],
+//     ]),
+//     // ИЗМЕНЕНО: Вызываем модель динамически
+//     (promptValue, config) => {
+//         const model = getModel(config.configurable.modelProvider, { temperature: 0.1 });
+//         return model.withStructuredOutput(keywordsSchema).invoke(promptValue);
+//     },
+// ]);
 
-export const keywordGeneratorChain = RunnableSequence.from([
-  // Первый шаг - это лямбда-функция, которая ДИНАМИЧЕСКИ создает промпт
-  (input: { productName: string; productUrl?: string }) => {
-    const messages = [
-      new SystemMessage(
-        "Ты — профессиональный SEO-аналитик. Твоя задача — проанализировать название товара и составить семантическое ядро из 30 однословных ключей, разделив их на две категории по 15 ключей: обязательные и дополнительные. Верни результат в виде JSON-объекта, соответствующего предоставленной схеме."
-      ),
-    ];
+// export const keywordGeneratorChain = new RunnableLambda({
+//   func: async (input: {
+//     productName: string;
+//     productUrl?: string;
+//     modelProvider: ModelProvider;
+//   }) => {
+//     console.log(
+//       `[Keyword Chain] Received input for "${input.productName}" with model ${input.modelProvider}`
+//     );
 
-    // Собираем текст для HumanMessage
-    let humanText = `Проанализируй товар с названием: "${input.productName}".`;
+//     // 1. Динамически выбираем модель
+//     const model = getModel(input.modelProvider, { temperature: 0.1 });
 
-    // Если URL предоставлен и он не пустой, добавляем дополнительный контекст
-    if (input.productUrl) {
-      humanText += `\n(Используй содержимое по ссылке для дополнительного контекста: ${input.productUrl})`;
+//     // 2. Динамически создаем промпт
+//     let humanText = `Проанализируй товар с названием: "{productName}".`;
+//     if (input.productUrl) {
+//       humanText += `\n(Используй содержимое по ссылке для дополнительного контекста: {productUrl})`;
+//     }
+//     const prompt = ChatPromptTemplate.fromMessages([
+//       [
+//         "system",
+//         "Ты — профессиональный SEO-аналитик. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — проанализировать название товара и составить семантическое ядро из 30 однословных ключей, разделив их на две категории по 15 ключей: обязательные и дополнительные. Верни результат в виде JSON-объекта.",
+//       ],
+//       ["human", humanText],
+//     ]);
+
+//     // 3. Создаем финальную цепочку со структурированным выводом
+//     const chain = prompt.pipe(model.withStructuredOutput(keywordsSchema));
+
+//     // 4. Вызываем цепочку с нужными переменными и возвращаем результат
+//     return await chain.invoke({
+//       productName: input.productName,
+//       productUrl: input.productUrl,
+//     });
+//   },
+// });
+// export const keywordGeneratorChain = new RunnableLambda({
+//   func: async (input: {
+//     productName: string;
+//     productUrl?: string;
+//     modelProvider: ModelProvider;
+//   }) => {
+//     const model = getModel(input.modelProvider, { temperature: 0.1 });
+//     const prompt = ChatPromptTemplate.fromMessages([ "Ты — профессиональный SEO-аналитик. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — проанализировать название товара и составить семантическое ядро из 30 однословных ключей, разделив их на две категории по 15 ключей: обязательные и дополнительные. Верни результат в виде JSON-объекта." ]);
+//     const chain = prompt.pipe(model.withStructuredOutput(keywordsSchema));
+//     return await chain.invoke(input); // Передаем весь input
+//   },
+// });
+
+export const keywordGeneratorChain = new RunnableLambda({
+  func: async (input: {
+    productName: string;
+    productUrl?: string;
+    modelProvider: ModelProvider;
+  }) => {
+    console.log(
+      `[Keyword Chain] Invoking with explicit JSON prompt for model ${input.modelProvider}`
+    );
+
+    // 1. Динамически выбираем модель
+    const model = getModel(input.modelProvider, {
+      temperature: 0.1,
+      maxOutputTokens: 1024,
+    });
+
+    // 2. Создаем НОВЫЙ, более явный промпт с примером
+    const humanText = `
+Проанализируй товар с названием: "${input.productName}".
+${
+  input.productUrl
+    ? `(Используй содержимое по ссылке для дополнительного контекста: ${input.productUrl})`
+    : ""
+}
+
+Твоя задача — составить семантическое ядро из однословных ключей.
+
+1.  **Обязательные ключи (15 штук):** Самые важные, высокочастотные слова, точно идентифицирующие товар.
+2.  **Дополнительные ключи (15 штук):** Слова, описывающие второстепенные характеристики.
+
+ПРИМЕР ВЫВОДА:
+{{
+  "requiredKeywords": ["ключ1", "ключ2", "ключ3"],
+  "optionalKeywords": ["ключA", "ключB", "ключC"]
+  }}
+`;
+
+    const prompt = ChatPromptTemplate.fromMessages([
+      [
+        "system",
+        "Ты — профессиональный SEO-аналитик. Твоя задача — проанализировать название товара и составить семантическое ядро. КРИТИЧЕСКИ ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без какого-либо другого текста или Markdown-разметки (никаких ```json).",
+      ],
+      ["human", humanText],
+    ]);
+
+    // 3. Создаем простую цепочку: промпт -> модель -> парсер строки
+    const chain = prompt.pipe(model).pipe(new StringOutputParser());
+
+    // 4. Вызываем цепочку и парсим результат вручную
+    const responseText = await chain.invoke({
+      productName: input.productName,
+      productUrl: input.productUrl,
+    });
+
+    try {
+      // Пытаемся распарсить полученный текст как JSON
+      return JSON.parse(responseText);
+    } catch (e) {
+      console.error(
+        "[Keyword Chain] Failed to parse JSON from model response:",
+        responseText,
+        e
+      );
+      // Возвращаем пустую структуру в случае ошибки парсинга
+      return { requiredKeywords: [], optionalKeywords: [] };
     }
-
-    messages.push(new HumanMessage(humanText));
-
-    // Эта лямбда-функция возвращает готовый для модели массив сообщений
-    return messages;
   },
-  // Второй шаг - вызываем модель со структурированным выводом
-  structuredOutputModel.withStructuredOutput(keywordsSchema),
-]);
+});
+
+// Цепочка для ручной доработки
+export const refinementChain = new RunnableLambda({
+  func: async (input: {
+    originalContent: string;
+    userPrompt: string;
+    modelProvider: ModelProvider;
+  }) => {
+    const model = getModel(input.modelProvider, {
+      temperature: 0.3,
+      maxOutputTokens: 1024,
+    });
+    const prompt = userRefinementPrompt;
+    const chain = prompt.pipe(model).pipe(new StringOutputParser());
+    return await chain.invoke(input);
+  },
+});
