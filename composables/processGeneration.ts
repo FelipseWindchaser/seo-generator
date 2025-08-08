@@ -10,7 +10,8 @@ import type {
 import { ContentValidator } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
 import { handleGoogleAIError } from "~/server/utils/error-handler";
-
+import { getQueuedTasks, updateTask } from "~/server/utils/redis";
+import {selfCorrectingChain} from "~/server/services/generation.graph";
 import { seoGeneratorChain, refinementChain, ModelProvider } from "~/server/services/langchain.service";
 
 // --- ИНИЦИАЛИЗАЦИЯ ---
@@ -57,53 +58,53 @@ export function checkAdditionalRequirements(
 export const repeatFunction = () => {
   const interval = 10000;
   const execute = () => {
-    processTask();
+    processNextTaskInQueue().catch(err => console.error("[ProcessTask] Unhandled error in worker:", err));
     setTimeout(execute, interval);
   };
   setTimeout(execute, interval);
 };
 
-const processTask = async () => {
-  console.log(
-    `[ProcessTask] Checking for new tasks at ${new Date().toLocaleTimeString()}`
-  );
-  try {
-    const tasks: Task[] = await getProcessingTasks();
-    if (tasks.length === 0) return;
-    console.log(`[ProcessTask] Found ${tasks.length} tasks to process.`);
-    for await (const task of tasks) {
-      if (!task.request) {
-        await updateTask(task.id, {
-          status: "error",
-          result: {
-            content: "Ошибка: отсутствуют данные для запроса.",
-            success: false,
-            attempts: 0,
-            title: "",
-            description: "",
-          },
-        });
-        continue;
-      }
-      try {
-        const result = await runGenerationWithValidation(task.request);
-        await updateTask(task.id, { status: "completed", result });
-      } catch (error: any) {
-        console.error(
-          `[ProcessTask] CRITICAL ERROR during generation for task ${task.id}:`,
-          error
-        );
-        const errorMessage = handleGoogleAIError(error).statusMessage;
-        await updateTask(task.id, {
-          status: "error",
-          result: { content: errorMessage, success: false, attempts: 0, title: "", description: "" },
-        });
-      }
-    }
-  } catch (error) {
-    console.error("[ProcessTask] Failed to fetch or process tasks queue:", error);
+async function processNextTaskInQueue() {
+  // 1. Ищем ОДНУ задачу в очереди со статусом 'queued'
+  // getQueuedTasks должна возвращать задачи в порядке их создания
+  const queuedTasks = await getQueuedTasks(); 
+  if (queuedTasks.length === 0) {
+    // Очередь пуста, это нормальное состояние, выходим
+    return;
   }
-};
+
+  const taskToProcess = queuedTasks[0];
+  console.log(`[ProcessTask] Found task ${taskToProcess.id}, attempting to lock...`);
+
+  try {
+    // 2. НЕМЕДЛЕННО БЛОКИРУЕМ ЗАДАЧУ, меняя ее статус на 'running'
+    // После этого другой воркер ее уже не увидит
+    await updateTask(taskToProcess.id, { status: 'processing' });
+    console.log(`[ProcessTask] Task ${taskToProcess.id} locked. Starting generation...`);
+
+    // 3. Теперь, когда задача заблокирована, безопасно запускаем долгий процесс
+    if (!taskToProcess.request) {
+        throw new Error("Task request data is missing.");
+    }
+    const result = await runGenerationWithValidation(taskToProcess.request);
+    
+    // 4. Сохраняем финальный результат и помечаем задачу как 'completed'
+    await updateTask(taskToProcess.id, { status: "completed", result });
+    console.log(`[ProcessTask] Task ${taskToProcess.id} completed successfully.`);
+
+  } catch (error: any) {
+    console.error(`[ProcessTask] CRITICAL ERROR during processing task ${taskToProcess.id}:`, error);
+    const errorMessage = (error instanceof Error && error.message.includes("Google")) 
+        ? handleGoogleAIError(error).statusMessage 
+        : error.message || "Неизвестная критическая ошибка.";
+        
+    // 5. В случае ошибки, помечаем задачу как 'error', чтобы она не обрабатывалась снова
+    await updateTask(taskToProcess.id, { 
+        status: "error", 
+        result: { content: errorMessage, success: false, attempts: 0, title: "", description: "" } 
+    });
+  }
+}
 
 // --- ФУНКЦИЯ РУЧНОЙ КОРРЕКЦИИ ---
 export async function runUserRefinement(
@@ -131,39 +132,39 @@ export async function runUserRefinement(
 }
  
 
-// --- ГЛАВНАЯ ЛОГИКА (ИСПОЛЬЗУЕТ LANGCHAIN) ---
+// --- ГЛАВНАЯ ЛОГИКА (ИСПОЛЬЗУЕТ LANGGRAPH) ---
 async function runGenerationWithValidation(data: GenerationRequest): Promise<GenerationResult> {
-  const modelToUse = data.modelProvider || ModelProvider.GEMINI;
-  console.log(`[Generator] Starting LangChain process with model: ${modelToUse}...`);
+  console.log(`[Generator] Starting LangGraph self-correcting process...`);
   
   try {
-    // 1. ВЫЗЫВАЕМ ВСЮ ЦЕПОЧКУ ОДНОЙ КОМАНДОЙ
-    // Мы передаем `data` через `configurable`, чтобы она была доступна на всех шагах.
-    // ВАЖНО: LangChain пока не возвращает заголовок, используем заглушку.
-   
-    const contentWithKeywords = await seoGeneratorChain.invoke(
-      data, // Основные данные для промптов
-      {
-        // Конфигурация, доступная на всех шагах
-        configurable: {
-          modelProvider: modelToUse,
-        }
-      }
-    );
-    const title = data.productName; // Используем имя продукта как временный заголовок
+    // 1. ЗАПУСКАЕМ ГРАФ, передавая начальное состояние
+    // Граф сам выполнит все шаги: генерацию, валидацию и до 3-х попыток исправления.
+    const finalState = await selfCorrectingChain.invoke({
+      originalRequest: data,
+      // Устанавливаем начальные значения для других полей состояния
+      attempts: 0,
+      generatedContent: "",
+      validationIssues: [],
+      finalTitle: "",
+    });
 
-    // 2. Финальная "косметическая" обрезка
-    let finalContent = contentWithKeywords;
+    // 2. Берем финальные данные из состояния графа
+    const title = finalState.finalTitle || data.productName;
+    let finalContent = finalState.generatedContent;
+    const attempts = finalState.attempts;
+
+    // 3. Финальная "косметическая" обрезка (как защитный механизм)
     let processingLog: { added: string[], removed: string[] } = { added: [], removed: [] };
     if (finalContent.length > MAX_CONTENT_LENGTH) {
+      console.log(`[Trimmer] Final trim from ${finalContent.length} to ${MAX_CONTENT_LENGTH} chars.`);
       const allKeywords = [...data.requiredKeywords, ...data.optionalKeywords];
       const truncationResult = intelligentTruncate(finalContent, MAX_CONTENT_LENGTH, allKeywords);
       finalContent = truncationResult.newContent;
       processingLog.removed.push(...truncationResult.removedSentences);
     }
 
-    // 3. Финальная валидация
-    console.log("[Generator] Performing final validation...");
+    // 4. Финальная валидация для получения полных метрик для отчета
+    console.log("[Generator] Performing final validation for metrics report...");
     const validationResult = await validator.validate(
       finalContent,
       data.requiredKeywords,
@@ -172,24 +173,23 @@ async function runGenerationWithValidation(data: GenerationRequest): Promise<Gen
     
     const isSuccess = validationResult.isValid;
     if (isSuccess) {
-      console.log("[Generator] Final validation successful.");
+      console.log("[Generator] Final process successful.");
     } else {
-      console.warn("[Generator] Final validation failed with issues:", validationResult.issues);
+      console.warn("[Generator] Process finished, but final content has issues:", validationResult.issues);
     }
 
     const additionalChecks = checkAdditionalRequirements(finalContent, data);
-    return prepareFinalResult(title, finalContent, validationResult, additionalChecks, 1, isSuccess, processingLog);
+    return prepareFinalResult(title, finalContent, validationResult, additionalChecks, attempts, isSuccess, processingLog);
 
   } catch (error: any) {
-      console.error(`[Generator] LangChain process failed:`, error);
+      console.error(`[Generator] LangGraph process failed:`, error);
       const errorMessage = handleGoogleAIError(error).statusMessage;
-      // Возвращаем объект GenerationResult с ошибкой
       const errorResult: GenerationResult = {
           success: false,
           content: errorMessage,
           title: "Ошибка генерации",
           description: errorMessage,
-          attempts: 1,
+          attempts: 0, // или можно передать количество попыток до сбоя
       };
       return errorResult;
   }

@@ -25,7 +25,7 @@ export enum ModelProvider {
 }
 
 // Функция-фабрика, которая возвращает нужный экземпляр модели
-function getModel(
+export function getModel(
   provider: ModelProvider,
   config: { temperature: number; maxOutputTokens?: number }
 ): BaseChatModel {
@@ -181,71 +181,22 @@ export const seoGeneratorChain = RunnableSequence.from([
   injectorChain,
 ]);
 
-// Цепочка для генерации ключевых слов
-// export const keywordGeneratorChain = RunnableSequence.from([
-//     (input: { productName: string; productUrl?: string, modelProvider: ModelProvider }) => ({
-//         productName: input.productName,
-//         productUrl: input.productUrl || "",
-//     }),
-//     ChatPromptTemplate.fromMessages([
-//         ["system", `Ты — профессиональный SEO-аналитик. Твоя задача — проанализировать название товара и составить семантическое ядро из 30 однословных ключей, разделив их на две категории по 15 ключей: обязательные и дополнительные. Верни результат в виде JSON-объекта, соответствующего предоставленной схеме.`],
-//         ["human", `Проанализируй товар с названием: "{productName}".\n{productUrl ? "(Используй содержимое по ссылке для дополнительного контекста: {productUrl})" : ""}`],
-//     ]),
-//     // ИЗМЕНЕНО: Вызываем модель динамически
-//     (promptValue, config) => {
-//         const model = getModel(config.configurable.modelProvider, { temperature: 0.1 });
-//         return model.withStructuredOutput(keywordsSchema).invoke(promptValue);
-//     },
-// ]);
 
-// export const keywordGeneratorChain = new RunnableLambda({
-//   func: async (input: {
-//     productName: string;
-//     productUrl?: string;
-//     modelProvider: ModelProvider;
-//   }) => {
-//     console.log(
-//       `[Keyword Chain] Received input for "${input.productName}" with model ${input.modelProvider}`
-//     );
 
-//     // 1. Динамически выбираем модель
-//     const model = getModel(input.modelProvider, { temperature: 0.1 });
+function cleanAndParseJson(text: string): any {
+  const match = text.match(/```json\s*([\s\S]*?)\s*```/);
+  
+  // Если нашли Markdown-блок и в нем есть содержимое (match[1]), используем его.
+  // В противном случае, используем исходный текст.
+  const jsonString = match && match[1] ? match[1] : text;
 
-//     // 2. Динамически создаем промпт
-//     let humanText = `Проанализируй товар с названием: "{productName}".`;
-//     if (input.productUrl) {
-//       humanText += `\n(Используй содержимое по ссылке для дополнительного контекста: {productUrl})`;
-//     }
-//     const prompt = ChatPromptTemplate.fromMessages([
-//       [
-//         "system",
-//         "Ты — профессиональный SEO-аналитик. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — проанализировать название товара и составить семантическое ядро из 30 однословных ключей, разделив их на две категории по 15 ключей: обязательные и дополнительные. Верни результат в виде JSON-объекта.",
-//       ],
-//       ["human", humanText],
-//     ]);
-
-//     // 3. Создаем финальную цепочку со структурированным выводом
-//     const chain = prompt.pipe(model.withStructuredOutput(keywordsSchema));
-
-//     // 4. Вызываем цепочку с нужными переменными и возвращаем результат
-//     return await chain.invoke({
-//       productName: input.productName,
-//       productUrl: input.productUrl,
-//     });
-//   },
-// });
-// export const keywordGeneratorChain = new RunnableLambda({
-//   func: async (input: {
-//     productName: string;
-//     productUrl?: string;
-//     modelProvider: ModelProvider;
-//   }) => {
-//     const model = getModel(input.modelProvider, { temperature: 0.1 });
-//     const prompt = ChatPromptTemplate.fromMessages([ "Ты — профессиональный SEO-аналитик. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — проанализировать название товара и составить семантическое ядро из 30 однословных ключей, разделив их на две категории по 15 ключей: обязательные и дополнительные. Верни результат в виде JSON-объекта." ]);
-//     const chain = prompt.pipe(model.withStructuredOutput(keywordsSchema));
-//     return await chain.invoke(input); // Передаем весь input
-//   },
-// });
+  try {
+    return JSON.parse(jsonString);
+  } catch (e) {
+    console.error("[JSON Parser] Failed to parse JSON from model response:", { originalText: text, cleanedText: jsonString }, e);
+    return { requiredKeywords: [], optionalKeywords: [] };
+  }
+}
 
 export const keywordGeneratorChain = new RunnableLambda({
   func: async (input: {
@@ -253,19 +204,12 @@ export const keywordGeneratorChain = new RunnableLambda({
     productUrl?: string;
     modelProvider: ModelProvider;
   }) => {
-    console.log(
-      `[Keyword Chain] Invoking with explicit JSON prompt for model ${input.modelProvider}`
-    );
+    console.log(`[Keyword Chain] Invoking with explicit JSON prompt for model ${input.modelProvider}`);
 
-    // 1. Динамически выбираем модель
-    const model = getModel(input.modelProvider, {
-      temperature: 0.1,
-      maxOutputTokens: 1024,
-    });
+    const model = getModel(input.modelProvider, { temperature: 0.1, maxOutputTokens: 1024 });
 
-    // 2. Создаем НОВЫЙ, более явный промпт с примером
     const humanText = `
-Проанализируй товар с названием: "${input.productName}".
+Проанализируй товар с названием: "{productName}".
 ${
   input.productUrl
     ? `(Используй содержимое по ссылке для дополнительного контекста: ${input.productUrl})`
@@ -281,38 +225,26 @@ ${
 {{
   "requiredKeywords": ["ключ1", "ключ2", "ключ3"],
   "optionalKeywords": ["ключA", "ключB", "ключC"]
-  }}
+}}
 `;
 
     const prompt = ChatPromptTemplate.fromMessages([
       [
         "system",
-        "Ты — профессиональный SEO-аналитик. Твоя задача — проанализировать название товара и составить семантическое ядро. КРИТИЧЕСКИ ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без какого-либо другого текста или Markdown-разметки (никаких ```json).",
+        "Ты — профессиональный SEO-аналитик. Русский язык - твой родной язык, ты пишешь и думаешь на русском языке. Твоя задача — проанализировать название товара и составить семантическое ядро. КРИТИЧЕСКИ ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без какого-либо другого текста или Markdown-разметки (никаких ```json).",
       ],
       ["human", humanText],
     ]);
 
-    // 3. Создаем простую цепочку: промпт -> модель -> парсер строки
     const chain = prompt.pipe(model).pipe(new StringOutputParser());
 
-    // 4. Вызываем цепочку и парсим результат вручную
     const responseText = await chain.invoke({
       productName: input.productName,
       productUrl: input.productUrl,
     });
 
-    try {
-      // Пытаемся распарсить полученный текст как JSON
-      return JSON.parse(responseText);
-    } catch (e) {
-      console.error(
-        "[Keyword Chain] Failed to parse JSON from model response:",
-        responseText,
-        e
-      );
-      // Возвращаем пустую структуру в случае ошибки парсинга
-      return { requiredKeywords: [], optionalKeywords: [] };
-    }
+    // ИСПОЛЬЗУЕМ НАШУ НОВУЮ ФУНКЦИЮ-ПАРСЕР
+    return cleanAndParseJson(responseText);
   },
 });
 

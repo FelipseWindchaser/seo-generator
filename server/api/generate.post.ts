@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
     const validatedData = requestSchema.parse(body) as GenerationRequest;
 
     // Теперь validatedData будет содержать modelProvider, если он был в запросе
-    const taskId = await createTask(validatedData);
+    const taskId = await createTask(validatedData, 'queued');
 
     console.log(`[API /generate] Task ${taskId} created successfully with model: ${validatedData.modelProvider || 'default'}.`);
 

@@ -11,7 +11,7 @@ export function getRedis(): Redis {
   return redis;
 }
 
-export async function createTask(request: GenerationRequest): Promise<string> {
+export async function createTask(request: GenerationRequest, status: string): Promise<string> {
   const redis = getRedis();
   const taskId = `task_${Date.now()}_${Math.random()
     .toString(36)
@@ -19,7 +19,7 @@ export async function createTask(request: GenerationRequest): Promise<string> {
 
   const task: Task = {
     id: taskId,
-    status: "processing",
+    status: "queued",
     request,
     createdAt: new Date().toISOString(),
   };
@@ -51,7 +51,7 @@ export async function getTask(taskId: string): Promise<Task | null> {
 
 
 // find all processing tasks
-export async function getProcessingTasks(): Promise<Task[]> {
+export async function getQueuedTasks(): Promise<Task[]> {
   const redis = getRedis();
   
   try {
@@ -71,7 +71,7 @@ export async function getProcessingTasks(): Promise<Task[]> {
     
     // 4. Filter for processing tasks
     return tasks.filter((task): task is Task => 
-      task !== null && task.status === 'processing'
+      task !== null && task.status === 'queued'
     );
     
   } catch (error) {
@@ -81,7 +81,7 @@ export async function getProcessingTasks(): Promise<Task[]> {
 }
 // get task object by id
 const getalltasks = async () => {
-  const result = await getProcessingTasks();
+  const result = await getQueuedTasks();
   // console.log('getalltasks', result);
 }
 getalltasks();

@@ -136,7 +136,7 @@ export interface GenerationResult {
  */
 export interface Task {
   id: string;
-  status: "processing" | "completed" | "error";
+  status: "queued" | "processing" | "completed" | "error";
   request?: GenerationRequest; // Использует обновленный GenerationRequest
   result?: GenerationResult;   // Использует обновленный GenerationResult
   error?: string;
