@@ -53,28 +53,75 @@ export class ContentValidator {
     });
   }
 
+  // private calculateMetrics(
+  //   content: string, 
+  //   requiredKeywords: string[],
+  //   optionalKeywords: string[],
+  //   searchResult: { found_keywords: string[], details: Record<string, { count: number }> }
+  // ): ValidationMetrics {
+  //   const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
+    
+  //   let requiredOccurrences = 0;
+  //   requiredKeywords.forEach(keyword => {
+  //       requiredOccurrences += searchResult.details[keyword]?.count || 0;
+  //   });
+
+  //   const keywordDensity = wordCount > 0 ? (requiredOccurrences / wordCount * 100) : 0;
+    
+  //   const foundKeywords = searchResult.found_keywords;
+  //   const usedOptionalCount = optionalKeywords.filter(k => foundKeywords.includes(k)).length;
+  //   const usedRequiredCount = requiredKeywords.filter(k => foundKeywords.includes(k)).length;
+
+  //   return {
+  //     charCount: content.length,
+  //     charCountNoSpaces: content.replace(/\s/g, '').length,
+  //     wordCount,
+  //     requiredKeywordsUsed: usedRequiredCount,
+  //     requiredKeywordsTotal: requiredKeywords.length,
+  //     optionalKeywordsUsed: usedOptionalCount,
+  //     optionalKeywordsTotal: optionalKeywords.length,
+  //     keywordsFound: foundKeywords,
+  //     keywordsUsed: foundKeywords.length,
+  //     totalKeywords: requiredKeywords.length + optionalKeywords.length,
+  //     keywordDensity: Math.round(keywordDensity * 100) / 100,
+  //     keywordOccurrences: requiredOccurrences,
+  //     missingKeywords: requiredKeywords.filter(k => !foundKeywords.includes(k)),
+  //     keywordUsageDetails: searchResult.details,
+  //     keywordPositions: { beginning: 0, middle: 0, end: 0 },
+  //     charDensity: 0,
+  //   };
+  // }
+
+  //Обновленный метод подсчета символов для учета спецсимволов
   private calculateMetrics(
     content: string, 
     requiredKeywords: string[],
     optionalKeywords: string[],
     searchResult: { found_keywords: string[], details: Record<string, { count: number }> }
   ): ValidationMetrics {
+    // Подсчёт символов с учётом Unicode-графем (правильно считает эмодзи, акценты и т.п.)
+    const charCount = Array.from(content).length;
+    const charCountNoSpaces = Array.from(content.replace(/\s/g, '')).length;
+  
+    // Подсчёт слов
     const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
-    
+  
+    // Подсчёт количества вхождений обязательных ключей
     let requiredOccurrences = 0;
     requiredKeywords.forEach(keyword => {
-        requiredOccurrences += searchResult.details[keyword]?.count || 0;
+      requiredOccurrences += searchResult.details[keyword]?.count || 0;
     });
-
+  
+    // Плотность ключей в %
     const keywordDensity = wordCount > 0 ? (requiredOccurrences / wordCount * 100) : 0;
-    
+  
     const foundKeywords = searchResult.found_keywords;
     const usedOptionalCount = optionalKeywords.filter(k => foundKeywords.includes(k)).length;
     const usedRequiredCount = requiredKeywords.filter(k => foundKeywords.includes(k)).length;
-
+  
     return {
-      charCount: content.length,
-      charCountNoSpaces: content.replace(/\s/g, '').length,
+      charCount, // теперь корректный Unicode-подсчёт
+      charCountNoSpaces,
       wordCount,
       requiredKeywordsUsed: usedRequiredCount,
       requiredKeywordsTotal: requiredKeywords.length,

@@ -27,6 +27,7 @@
     "@langchain/google-genai": "^0.2.15",
     "@langchain/groq": "^0.2.3",
     "@langchain/langgraph": "^0.3.10",
+    "@langchain/openai": "^0.6.6",
     "@pinia/nuxt": "^0.5.1",
     "@vueuse/nuxt": "^10.7.0",
     "az": "^0.2.3",

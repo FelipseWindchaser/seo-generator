@@ -12,6 +12,7 @@ import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatDeepSeek } from "@langchain/deepseek";
 import { ChatGroq } from "@langchain/groq";
+import { ChatOpenAI } from "@langchain/openai";
 import type { GenerationRequest } from "~/types";
 import { z } from "zod";
 
@@ -22,6 +23,7 @@ export enum ModelProvider {
   GEMINI = "gemini-2.0-flash",
   DEEPSEEK = "deepseek-chat",
   GROQ = "llama3-70b-8192",
+  GPT_4o = "gpt-4o-2024-08-06",
 }
 
 // Функция-фабрика, которая возвращает нужный экземпляр модели
@@ -49,6 +51,15 @@ export function getModel(
         temperature: config.temperature,
         maxTokens: config.maxOutputTokens,
         // apiKey берется из переменной окружения GROQ_API_KEY
+      });
+
+    case ModelProvider.GPT_4o:
+      console.log(`[LangChain Service] Initializing OpenAI model: ${provider}`);
+      return new ChatOpenAI({
+        modelName: provider, // У OpenAI это `modelName`
+        temperature: config.temperature,
+        maxTokens: config.maxOutputTokens,
+        // apiKey берется из переменной окружения OPENAI_API_KEY
       });
 
     case ModelProvider.GEMINI:
@@ -181,11 +192,9 @@ export const seoGeneratorChain = RunnableSequence.from([
   injectorChain,
 ]);
 
-
-
 function cleanAndParseJson(text: string): any {
   const match = text.match(/```json\s*([\s\S]*?)\s*```/);
-  
+
   // Если нашли Markdown-блок и в нем есть содержимое (match[1]), используем его.
   // В противном случае, используем исходный текст.
   const jsonString = match && match[1] ? match[1] : text;
@@ -193,7 +202,11 @@ function cleanAndParseJson(text: string): any {
   try {
     return JSON.parse(jsonString);
   } catch (e) {
-    console.error("[JSON Parser] Failed to parse JSON from model response:", { originalText: text, cleanedText: jsonString }, e);
+    console.error(
+      "[JSON Parser] Failed to parse JSON from model response:",
+      { originalText: text, cleanedText: jsonString },
+      e
+    );
     return { requiredKeywords: [], optionalKeywords: [] };
   }
 }
@@ -204,9 +217,14 @@ export const keywordGeneratorChain = new RunnableLambda({
     productUrl?: string;
     modelProvider: ModelProvider;
   }) => {
-    console.log(`[Keyword Chain] Invoking with explicit JSON prompt for model ${input.modelProvider}`);
+    console.log(
+      `[Keyword Chain] Invoking with explicit JSON prompt for model ${input.modelProvider}`
+    );
 
-    const model = getModel(input.modelProvider, { temperature: 0.1, maxOutputTokens: 1024 });
+    const model = getModel(input.modelProvider, {
+      temperature: 0.1,
+      maxOutputTokens: 600,
+    });
 
     const humanText = `
 Проанализируй товар с названием: "{productName}".
