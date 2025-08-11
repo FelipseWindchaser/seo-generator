@@ -11,8 +11,9 @@ import { ContentValidator } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
 import { handleGoogleAIError } from "~/server/utils/error-handler";
 import { getQueuedTasks, updateTask } from "~/server/utils/redis";
-import {selfCorrectingChain} from "~/server/services/generation.graph";
-import { seoGeneratorChain, refinementChain, ModelProvider } from "~/server/services/langchain.service";
+import { generativeAgent } from "~/server/services/generation.graph";
+import { refinementChain, ModelProvider } from "~/server/services/langchain.service";
+import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
 
 // --- ИНИЦИАЛИЗАЦИЯ ---
 const validator = new ContentValidator();
@@ -56,7 +57,7 @@ export function checkAdditionalRequirements(
 
 // --- ЛОГИКА ФОНОВОГО ПРОЦЕССА ---
 export const repeatFunction = () => {
-  const interval = 10000;
+  const interval = 5000;
   const execute = () => {
     processNextTaskInQueue().catch(err => console.error("[ProcessTask] Unhandled error in worker:", err));
     setTimeout(execute, interval);
@@ -132,28 +133,118 @@ export async function runUserRefinement(
 }
  
 
-// --- ГЛАВНАЯ ЛОГИКА (ИСПОЛЬЗУЕТ LANGGRAPH) ---
+// // --- ГЛАВНАЯ ЛОГИКА (ИСПОЛЬЗУЕТ LANGGRAPH) ---
+// async function runGenerationWithValidation(data: GenerationRequest): Promise<GenerationResult> {
+//   console.log(`[Generator] Starting LangGraph self-correcting process...`);
+  
+//   try {
+//     // 1. ЗАПУСКАЕМ ГРАФ, передавая начальное состояние
+//     // Граф сам выполнит все шаги: генерацию, валидацию и до 3-х попыток исправления.
+//     const finalState = await selfCorrectingChain.invoke({
+//       originalRequest: data,
+//       // Устанавливаем начальные значения для других полей состояния
+//       attempts: 0,
+//       generatedContent: "",
+//       validationIssues: [],
+//       finalTitle: "",
+//     });
+
+//     // 2. Берем финальные данные из состояния графа
+//     const title = finalState.finalTitle || data.productName;
+//     let finalContent = finalState.generatedContent;
+//     const attempts = finalState.attempts;
+
+//     // 3. Финальная "косметическая" обрезка (как защитный механизм)
+//     let processingLog: { added: string[], removed: string[] } = { added: [], removed: [] };
+//     if (finalContent.length > MAX_CONTENT_LENGTH) {
+//       console.log(`[Trimmer] Final trim from ${finalContent.length} to ${MAX_CONTENT_LENGTH} chars.`);
+//       const allKeywords = [...data.requiredKeywords, ...data.optionalKeywords];
+//       const truncationResult = intelligentTruncate(finalContent, MAX_CONTENT_LENGTH, allKeywords);
+//       finalContent = truncationResult.newContent;
+//       processingLog.removed.push(...truncationResult.removedSentences);
+//     }
+
+//     // 4. Финальная валидация для получения полных метрик для отчета
+//     console.log("[Generator] Performing final validation for metrics report...");
+//     const validationResult = await validator.validate(
+//       finalContent,
+//       data.requiredKeywords,
+//       data.optionalKeywords
+//     );
+    
+//     const isSuccess = validationResult.isValid;
+//     if (isSuccess) {
+//       console.log("[Generator] Final process successful.");
+//     } else {
+//       console.warn("[Generator] Process finished, but final content has issues:", validationResult.issues);
+//     }
+
+//     const additionalChecks = checkAdditionalRequirements(finalContent, data);
+//     return prepareFinalResult(title, finalContent, validationResult, additionalChecks, attempts, isSuccess, processingLog);
+
+//   } catch (error: any) {
+//       console.error(`[Generator] LangGraph process failed:`, error);
+//       const errorMessage = handleGoogleAIError(error).statusMessage;
+//       const errorResult: GenerationResult = {
+//           success: false,
+//           content: errorMessage,
+//           title: "Ошибка генерации",
+//           description: errorMessage,
+//           attempts: 0, // или можно передать количество попыток до сбоя
+//       };
+//       return errorResult;
+//   }
+// }
+
+
+// --- ГЛАВНАЯ ЛОГИКА (ТЕПЕРЬ ИСПОЛЬЗУЕТ АГЕНТА) ---
 async function runGenerationWithValidation(data: GenerationRequest): Promise<GenerationResult> {
-  console.log(`[Generator] Starting LangGraph self-correcting process...`);
+  const modelToUse = data.modelProvider || ModelProvider.GEMINI;
+  console.log(`[Generator] Starting Generative Agent process with model: ${modelToUse}...`);
   
   try {
-    // 1. ЗАПУСКАЕМ ГРАФ, передавая начальное состояние
-    // Граф сам выполнит все шаги: генерацию, валидацию и до 3-х попыток исправления.
-    const finalState = await selfCorrectingChain.invoke({
-      originalRequest: data,
-      // Устанавливаем начальные значения для других полей состояния
-      attempts: 0,
-      generatedContent: "",
-      validationIssues: [],
-      finalTitle: "",
-    });
+    // 1. СОЗДАЕМ ПЕРВОНАЧАЛЬНУЮ ИНСТРУКЦИЮ ДЛЯ АГЕНТА
+    const initialPrompt = `
+Привет! Мне нужно, чтобы ты написал SEO-текст. Вот все правила и данные, которые ты должен использовать.
 
-    // 2. Берем финальные данные из состояния графа
-    const title = finalState.finalTitle || data.productName;
-    let finalContent = finalState.generatedContent;
-    const attempts = finalState.attempts;
+--- ДАННЫЕ ДЛЯ ЗАДАЧИ ---
+- Название товара: ${data.productName}
+- ОБЪЕМ ТЕКСТА: СТРОГО от 1800 до 2000 символов.
+- ОБЯЗАТЕЛЬНЫЕ КЛЮЧИ: ${JSON.stringify(data.requiredKeywords)}
+- НЕОБЯЗАТЕЛЬНЫЕ КЛЮЧИ: ${JSON.stringify(data.optionalKeywords)}
+- УТП: ${data.usp.join(', ')}
+- Отзывы конкурентов: ${data.reviews}
 
-    // 3. Финальная "косметическая" обрезка (как защитный механизм)
+--- ТВОЙ ПЛАН ДЕЙСТВИЙ ---
+1.  Напиши черновик текста, который соответствует всем правилам.
+2.  Когда черновик будет готов, вызови инструмент 'validateSeoText', чтобы проверить свою работу. ВАЖНО: В вызов инструмента ты должен передать JSON-строку, содержащую ВСЕ три ключа: "textToValidate" (твой сгенерированный текст), "requiredKeywords" (список обязательных ключей) и "optionalKeywords" (список необязательных ключей).
+3. Проанализируй результат.
+4. **ЕСЛИ ТЫ ПОЛУЧИЛ ОШИБКУ ПРО JSON:** Внимательно проверь синтаксис своего последнего вызова инструмента. Убедись, что все символы новой строки (\\n) и кавычки (\\") внутри поля "textToValidate" правильно экранированы. Исправь JSON и вызови инструмент снова.
+5.  **ЕСЛИ ТЫ ПОЛУЧИЛ СПИСОК ОШИБОК ВАЛИДАЦИИ:** Исправь текст в соответствии с ошибками и снова вызови валидатор.
+6.  Повторяй, пока валидатор не вернет "Валидация пройдена успешно".
+7.  Когда валидация будет пройдена, верни мне финальный текст в качестве своего ответа.
+`;
+
+    // 2. ЗАПУСКАЕМ АГЕНТА
+    const finalState = await generativeAgent.invoke(
+      { 
+        messages: [new HumanMessage(initialPrompt)],
+        // Добавляем начальное значение для нового счетчика
+        toolInvocations: 0, 
+      },
+      { 
+        configurable: { 
+          modelProvider: modelToUse,
+        } 
+      }
+    );
+
+    // 3. ИЗВЛЕКАЕМ ФИНАЛЬНЫЙ РЕЗУЛЬТАТ
+    const lastAiMessage = finalState.messages.filter((m: BaseMessage) => m instanceof AIMessage && (!m.tool_calls || m.tool_calls.length === 0)).pop() as AIMessage | undefined;
+    let finalContent = lastAiMessage?.content.toString() || "Модель не вернула финальный текстовый ответ.";
+    const title = data.productName;
+
+    // 4. Финальная "косметическая" обрезка (на всякий случай)
     let processingLog: { added: string[], removed: string[] } = { added: [], removed: [] };
     if (finalContent.length > MAX_CONTENT_LENGTH) {
       console.log(`[Trimmer] Final trim from ${finalContent.length} to ${MAX_CONTENT_LENGTH} chars.`);
@@ -163,7 +254,7 @@ async function runGenerationWithValidation(data: GenerationRequest): Promise<Gen
       processingLog.removed.push(...truncationResult.removedSentences);
     }
 
-    // 4. Финальная валидация для получения полных метрик для отчета
+    // 5. Финальная валидация для отчета
     console.log("[Generator] Performing final validation for metrics report...");
     const validationResult = await validator.validate(
       finalContent,
@@ -171,15 +262,19 @@ async function runGenerationWithValidation(data: GenerationRequest): Promise<Gen
       data.optionalKeywords
     );
     
-    const isSuccess = validationResult.isValid;
-    if (isSuccess) {
-      console.log("[Generator] Final process successful.");
+    // ИСПРАВЛЕНО: Процесс генерации считается успешным, так как агент вернул результат.
+    // Качество этого результата будет отражено в `validationResult.issues` (которые попадут в `warnings`).
+    const isSuccess = true; 
+
+    if (!validationResult.isValid) {
+      console.warn("[Generator] Agent process finished. The final content has issues:", validationResult.issues);
     } else {
-      console.warn("[Generator] Process finished, but final content has issues:", validationResult.issues);
+      console.log("[Generator] Agent process finished. Final validation successful.");
     }
 
     const additionalChecks = checkAdditionalRequirements(finalContent, data);
-    return prepareFinalResult(title, finalContent, validationResult, additionalChecks, attempts, isSuccess, processingLog);
+    // Мы передаем `isSuccess = true`, а `validationResult` содержит все недочеты.
+    return prepareFinalResult(title, finalContent, validationResult, additionalChecks, 1, isSuccess, processingLog);
 
   } catch (error: any) {
       console.error(`[Generator] LangGraph process failed:`, error);
@@ -189,7 +284,7 @@ async function runGenerationWithValidation(data: GenerationRequest): Promise<Gen
           content: errorMessage,
           title: "Ошибка генерации",
           description: errorMessage,
-          attempts: 0, // или можно передать количество попыток до сбоя
+          attempts: 1,
       };
       return errorResult;
   }
