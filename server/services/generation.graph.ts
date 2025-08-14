@@ -25,7 +25,7 @@ interface AgentState {
 const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Initial generation...`);
   const { generationRequest } = state;
-  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 700 });
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 520 });
   
   const prompt = ChatPromptTemplate.fromTemplate(`
 Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст для товара.
@@ -110,7 +110,7 @@ const trimNode = async (state: AgentState): Promise<Partial<AgentState>> => {
 const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Extending text...`);
   const { generationRequest, generatedContent } = state;
-  const model = getModel(ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 700 }); // Более высокая температура для креативности
+  const model = getModel(ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 600 }); // Более высокая температура для креативности
   
   const prompt = ChatPromptTemplate.fromTemplate(`
 Ты — креативный копирайтер. Твоя задача — органично расширить текст, чтобы его объем попал в диапазон 1800–2000 символов.
