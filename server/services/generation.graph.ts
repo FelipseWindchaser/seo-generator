@@ -22,41 +22,100 @@ interface AgentState {
 // --- 2. ОПРЕДЕЛЕНИЕ УЗЛОВ-СПЕЦИАЛИСТОВ С УЛУЧШЕННЫМИ ПРОМПТАМИ ---
 
 // Узел для первоначальной генерации
+// const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+//   console.log(`[Graph] Initial generation...`);
+//   const { generationRequest } = state;
+//   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 520 });
+  
+//   const prompt = ChatPromptTemplate.fromTemplate(`
+// Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст для товара.
+
+// --- ДАННЫЕ ---
+// - Название товара: {productName}
+// - УТП (раскрой через выгоды для клиента): {usp}
+// - Отзывы конкурентов (преврати проблемы в преимущества): {reviews}
+// - Обязательные ключи: {requiredKeywords}
+// - Необязательные ключи: {optionalKeywords}
+
+// --- ПРАВИЛА ---
+// 1. Объём: Постарайся сгенерировать текст объемом 1800–2000 символов.
+// 2. Ключи: Используй все обязательные ключи и как можно больше необязательных.
+// 3. Стиль: Говори о выгодах, избегай повторов, используй синонимы, не пиши «воду».
+// 4. Структура:
+//    - 1 абзац: общее впечатление, позиционирование, основные ключи.
+//    - 2 абзац: функции и технологии.
+//    - 3 абзац: отличия от аналогов, УТП, отзывы.
+//    - 4 абзац: кому подойдёт и как упростит жизнь.
+// 5. Запрет: без списков, подзаголовков, маркировок — только цельный текст.
+
+// Верни ответ в формате:
+// ===ЗАГОЛОВОК===
+// [заголовок]
+// ===ОПИСАНИЕ===
+// [текст]
+//   `);
+  
+//   const chain = prompt.pipe(model).pipe(new StringOutputParser());
+//   const responseText = await chain.invoke({
+//       productName: generationRequest.productName,
+//       reviews: generationRequest.reviews,
+//       usp: generationRequest.usp.join(', '),
+//       requiredKeywords: JSON.stringify(generationRequest.requiredKeywords),
+//       optionalKeywords: JSON.stringify(generationRequest.optionalKeywords),
+//   });
+
+//   const titleMatch = responseText.match(/===ЗАГОЛОВОК===\s*([\s\S]*?)\s*===ОПИСАНИЕ===/);
+//   const descriptionMatch = responseText.match(/===ОПИСАНИЕ===\s*([\s\S]*)/);
+//   const title = titleMatch ? titleMatch[1].trim() : generationRequest.productName;
+//   const content = descriptionMatch ? descriptionMatch[1].trim() : responseText;
+  
+//   return { generatedContent: content, title: title, attempts: 1 };
+// };
+
+
+// Узел для первоначальной генерации (С ИНТЕГРИРОВАННЫМ СТРИМИНГОМ)
 const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
-  console.log(`[Graph] Initial generation...`);
+  console.log(`[Graph] Initial generation with streaming and token control...`);
   const { generationRequest } = state;
-  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 520 });
+  
+  // 1. Модель настраивается на генерацию С БОЛЬШИМ ЗАПАСОМ
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { 
+    temperature: 0.7,
+    maxOutputTokens: 650
+  });
   
   const prompt = ChatPromptTemplate.fromTemplate(`
-Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст для товара.
-
---- ДАННЫЕ ---
-- Название товара: {productName}
-- УТП (раскрой через выгоды для клиента): {usp}
-- Отзывы конкурентов (преврати проблемы в преимущества): {reviews}
-- Обязательные ключи: {requiredKeywords}
-- Необязательные ключи: {optionalKeywords}
-
---- ПРАВИЛА ---
-1. Объём: Постарайся сгенерировать текст объемом 1800–2000 символов.
-2. Ключи: Используй все обязательные ключи и как можно больше необязательных.
-3. Стиль: Говори о выгодах, избегай повторов, используй синонимы, не пиши «воду».
-4. Структура:
-   - 1 абзац: общее впечатление, позиционирование, основные ключи.
-   - 2 абзац: функции и технологии.
-   - 3 абзац: отличия от аналогов, УТП, отзывы.
-   - 4 абзац: кому подойдёт и как упростит жизнь.
-5. Запрет: без списков, подзаголовков, маркировок — только цельный текст.
-
-Верни ответ в формате:
-===ЗАГОЛОВОК===
-[заголовок]
-===ОПИСАНИЕ===
-[текст]
-  `);
+    Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст для товара.
+    
+    --- ДАННЫЕ ---
+    - Название товара: {productName}
+    - УТП (раскрой через выгоды для клиента): {usp}
+    - Отзывы конкурентов (преврати проблемы в преимущества): {reviews}
+    - Обязательные ключи: {requiredKeywords}
+    - Необязательные ключи: {optionalKeywords}
+    
+    --- ПРАВИЛА ---
+    1. Объём: Постарайся сгенерировать текст объемом 1800–2000 символов.
+    2. Ключи: Используй все обязательные ключи и как можно больше необязательных.
+    3. Стиль: Говори о выгодах, избегай повторов, используй синонимы, не пиши «воду».
+    4. Структура:
+       - 1 абзац: общее впечатление, позиционирование, основные ключи. В этом абзаце постарайся уместить как можно больше ключей. 
+       - 2 абзац: функции и технологии. В этом абзаце постарайся уместить большую часть ключей, не попавших в первый абзац.
+       - 3 абзац: отличия от аналогов, УТП, отзывы. В этом абзаце постарайся уместить оставшиеся ключи.
+       - 4 абзац: кому подойдёт и как упростит жизнь. В этом абзаце, если все еще остались неиспользованные ключи, добавь их в первое предложение.
+    5. Запрет: без списков, подзаголовков, маркировок — только цельный текст.
+    
+    Верни ответ в формате:
+    ===ЗАГОЛОВОК===
+    [заголовок]
+    ===ОПИСАНИЕ===
+    [текст]
+      `);
   
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
-  const responseText = await chain.invoke({
+
+  // 2. Вместо .invoke() используем .stream()
+  const stream = await chain.stream({
       productName: generationRequest.productName,
       reviews: generationRequest.reviews,
       usp: generationRequest.usp.join(', '),
@@ -64,12 +123,32 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
       optionalKeywords: JSON.stringify(generationRequest.optionalKeywords),
   });
 
+  let responseText = "";
+  const TARGET_LENGTH = 1950; // Целимся чуть ниже максимума
+
+  // 3. Итерируем по стриму и считаем СИМВОЛЫ
+  console.log(`[Streaming Node] Streaming response, targeting ~${TARGET_LENGTH} chars...`);
+  for await (const chunk of stream) {
+    responseText += chunk;
+    // 4. Прерываем цикл, как только набрали достаточно текста
+    if (responseText.length >= TARGET_LENGTH) {
+      console.log(`[Streaming Node] Target length reached. Breaking stream.`);
+      break; 
+    }
+  }
+
+  // 5. Парсим и делаем финальную "умную" обрезку
   const titleMatch = responseText.match(/===ЗАГОЛОВОК===\s*([\s\S]*?)\s*===ОПИСАНИЕ===/);
   const descriptionMatch = responseText.match(/===ОПИСАНИЕ===\s*([\s\S]*)/);
   const title = titleMatch ? titleMatch[1].trim() : generationRequest.productName;
-  const content = descriptionMatch ? descriptionMatch[1].trim() : responseText;
+  let content = descriptionMatch ? descriptionMatch[1].trim() : responseText;
   
-  return { generatedContent: content, title: title, attempts: 1 };
+  // Финальная обрезка - удаление оборванного предложения
+  const newContent  = intelligentTruncate(content);
+  
+  console.log(`[Streaming Node] Final content length: ${newContent.length}`);
+  
+  return { generatedContent: newContent, title: title, attempts: 1 };
 };
 
 // Узел для сокращения текста

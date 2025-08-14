@@ -16,6 +16,7 @@ import {
   refinementChain,
   ModelProvider,
 } from "~/server/services/langchain.service";
+import { concat } from "@langchain/core/utils/stream";
 import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
 
 // --- ИНИЦИАЛИЗАЦИЯ ---
