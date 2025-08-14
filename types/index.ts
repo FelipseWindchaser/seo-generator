@@ -96,6 +96,7 @@ export interface ValidationResult {
     semantic: SemanticMetrics;
   };
   issues: string[];
+  status: "OK" | "MISSING_KEYS" | "TOO_LONG" | "TOO_SHORT" | "NON_CRITICAL_ERRORS";
 }
 
 

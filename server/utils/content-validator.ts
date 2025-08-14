@@ -1,6 +1,12 @@
 import type { ValidationResult, ValidationMetrics, SemanticMetrics, ReadabilityMetrics, KeywordInstruction } from '~/types'
 import { morphologyService } from './morphology-service'
 
+
+export type ValidationStatus = "OK" | "MISSING_KEYS" | "TOO_LONG" | "TOO_SHORT" | "NON_CRITICAL_ERRORS";
+
+export interface StructuredValidationResult extends ValidationResult {
+    status: ValidationStatus;
+}
 export class ContentValidator {
   private readonly minChars = 1800;
   private readonly maxChars = 2000;
@@ -11,7 +17,7 @@ export class ContentValidator {
     content: string, 
     requiredKeywords: string[], 
     optionalKeywords: string[]
-  ): Promise<ValidationResult> {
+  ): Promise<StructuredValidationResult> {
     console.log(`\n--- [Validator] START validation for content (${content.length} chars) ---`);
     
     const issues: string[] = [];
@@ -27,16 +33,46 @@ export class ContentValidator {
 
     const readability = this.checkReadability(content);
     this.checkReadabilityIssues(readability, issues);
-    
     const semantic = {} as SemanticMetrics; 
 
-    const finalResult: ValidationResult = {
-      isValid: issues.filter(issue => issue.startsWith('❌')).length === 0,
-      metrics: { ...metrics, readability, semantic },
-      issues
-    };
+    // --- ФИНАЛЬНАЯ, ПРИОРИТЕЗИРОВАННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ СТАТУСА ---
+    
+    let status: ValidationStatus;
+    
+    const hasAnyIssues = issues.length > 0;
 
-    console.log("--- [Validator] END validation ---\n");
+    if (!hasAnyIssues) {
+      status = "OK";
+    } else {
+      // Определяем наличие критических ошибок
+      const hasMissingKeys = issues.some(issue => issue.startsWith('❌') && issue.includes("Отсутствует обязательный ключ"));
+      const isTooLong = issues.some(issue => issue.startsWith('❌') && issue.includes("Текст длинный"));
+      const isTooShort = issues.some(issue => issue.startsWith('❌') && issue.includes("Текст короткий"));
+
+      // Применяем логику приоритетов
+      if (hasMissingKeys) {
+        status = "MISSING_KEYS"; // Самый высокий приоритет
+      } else if (isTooLong) {
+        status = "TOO_LONG";
+      } else if (isTooShort) {
+        status = "TOO_SHORT";
+      } else {
+        // Если критических ошибок нет, но issues не пуст, значит остались только предупреждения
+        status = "NON_CRITICAL_ERRORS";
+      }
+    }
+
+    // `isValid` теперь означает "готов к завершению цикла"
+    const isValid = (status === "OK" || status === "NON_CRITICAL_ERRORS");
+
+    const finalResult: StructuredValidationResult = {
+      isValid,
+      metrics: { ...metrics, readability, semantic },
+      issues,
+      status,
+    };
+    
+    console.log(`[Validator] Final validation state: isValid=${finalResult.isValid}, status=${finalResult.status}, issuesCount=${finalResult.issues.length}`);
     return finalResult;
   }
 
