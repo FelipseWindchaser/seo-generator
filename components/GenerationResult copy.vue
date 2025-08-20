@@ -187,24 +187,6 @@
         <div class="prose max-w-none" v-html="formattedContent" />
       </div>
 
-      <!-- НОВЫЙ БЛОК: Кнопка Перегенерации -->
-      <div class="pt-6 border-t border-gray-200">
-        <div class="flex justify-center">
-          <button
-            @click="handleRegenerate"
-            :disabled="isRegenerating"
-            class="w-full sm:w-auto px-6 py-3 bg-orange-500 text-white rounded-md hover:bg-orange-600 disabled:bg-gray-400 flex items-center justify-center text-base font-medium"
-          >
-            <LoadingSpinner v-if="isRegenerating" class="mr-2" :size="20" />
-            {{
-              isRegenerating
-                ? "Перегенерируем..."
-                : "♻️ Перегенерировать полностью"
-            }}
-          </button>
-        </div>
-      </div>
-
       <!-- Кнопки действий -->
       <div class="flex gap-4">
         <button
@@ -246,36 +228,62 @@ const isRefining = ref(false);
 const refinementError = ref("");
 const isSaving = ref(false);
 const saveSuccessMessage = ref("");
-const isRegenerating = ref(false);
-const router = useRouter();
 
-const handleRegenerate = async () => {
-  if (!originalRequest.value) {
-    console.error("Cannot regenerate without original request data.");
-    return;
-  }
-  isRegenerating.value = true;
-  try {
-    // ИСПРАВЛЕНО: Вызываем СУЩЕСТВУЮЩИЙ API-эндпоинт /api/generate
-    const response = await $fetch<{ taskId: string }>("/api/generate", {
-      method: "POST",
-      body: originalRequest.value,
-    });
+// const checkStatus = async () => {
+//   try {
+//     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
+//     if (response.status === "completed") {
+//       status.value = "completed";
+//       result.value = response?.result || null;
+//       originalRequest.value = response?.request || null;
+//       if (!result.value) {
+//         status.value = "error";
+//         error.value = "Задача завершена, но результат генерации отсутствует.";
+//       }
+//     } else if (response.status === "error") {
+//       status.value = "error";
+//       error.value =
+//         response.result?.content || "Произошла неизвестная ошибка на сервере.";
+//     }
+//   } catch (err: any) {
+//     // Обработка HTTP-ошибок, которые выбросил $fetch
+//     status.value = "error";
+//     console.error("Failed to fetch task status:", err);
 
-    if (response.taskId) {
-      // Перенаправляем пользователя на страницу новой задачи
-      await router.push(`/tasks/${response.taskId}`);
-      // Перезагружаем страницу, чтобы сбросить состояние компонента
-      window.location.reload();
-    }
-  } catch (err: any) {
-    console.error("Failed to start regeneration:", err);
-    // Здесь можно добавить логику отображения ошибки пользователю
-  } finally {
-    isRegenerating.value = false;
-  }
-};
-
+//     // Проверяем наличие statusCode в объекте ошибки
+//     if (err.statusCode) {
+//       switch (err.statusCode) {
+//         case 404:
+//           error.value =
+//             "Задача не найдена. Возможно, вы открыли неверную или устаревшую ссылку.";
+//           break;
+//         case 500:
+//           error.value =
+//             "Произошла критическая ошибка на сервере. Пожалуйста, попробуйте позже.";
+//           break;
+//         case 400:
+//           error.value = `Некорректный запрос к серверу: ${
+//             err.data?.message || "проверьте данные"
+//           }.`;
+//           break;
+//         // case 503:
+//         //   error.value = "Сервис перегружен. Пожалуйста, попробуйте позже.";
+//         //   break;
+//         default:
+//           error.value = `Произошла ошибка сети (код: ${err.statusCode}). Пожалуйста, проверьте ваше подключение.`;
+//           break;
+//       }
+//     } else {
+//       // Если statusCode отсутствует, скорее всего, это проблема с сетью (CORS, DNS и т.д.)
+//       error.value =
+//         "Не удалось связаться с сервером. Проверьте ваше интернет-соединение.";
+//     }
+//     // Останавливаем интервал, так как произошла окончательная ошибка
+//     if (intervalId) {
+//       clearInterval(intervalId);
+//     }
+//   }
+// };
 const checkStatus = async () => {
   try {
     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
