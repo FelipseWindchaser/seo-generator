@@ -97,6 +97,12 @@ export async function updateTask(
 
   const updatedTask = { ...task, ...updates };
 
+   // --- ДОБАВЬТЕ ЭТОТ ЛОГ ---
+   console.log('--- [REDIS UPDATE] SAVING THIS OBJECT: ---');
+   // Мы используем JSON.stringify, чтобы увидеть вложенную структуру
+   console.log(JSON.stringify(updatedTask.result, null, 2));
+   // --- КОНЕЦ ЛОГА ---
+
   await redis.setex(`task:${taskId}`, 36000, JSON.stringify(updatedTask));
   return updatedTask;
 }

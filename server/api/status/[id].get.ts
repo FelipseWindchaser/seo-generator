@@ -3,6 +3,16 @@
 import { getTask } from "~/server/utils/redis";
 
 export default defineEventHandler(async (event) => {
+
+  // --- ДОБАВЬТЕ ЭТОТ ЛОГ ---
+  console.log(`--- [GET /api/status] Handler for task ${getRouterParam(event, "id")} EXECUTED at ${new Date().toLocaleTimeString()} ---`);
+  // --- КОНЕЦ ЛОГА ---
+// --- НАЧАЛО ИЗМЕНЕНИЙ ---
+  // Добавляем заголовки, запрещающие кеширование на всех уровнях (браузер, прокси, сервер)
+  setHeader(event, 'Cache-Control', 'no-cache, no-store, must-revalidate');
+  setHeader(event, 'Pragma', 'no-cache');
+  setHeader(event, 'Expires', '0');
+  // --- КОНЕЦ ИЗМЕНЕНИЙ ---
   const taskId = getRouterParam(event, "id");
 
   if (!taskId) {

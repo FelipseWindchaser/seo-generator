@@ -33,7 +33,14 @@
 
       <!-- Метрики -->
       <div v-if="result.metrics" class="bg-gray-50 rounded-lg p-4">
-        <h3 class="font-medium text-gray-900 mb-3">Метрики</h3>
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-medium text-gray-900">Метрики</h3>
+          <LoadingSpinner
+            v-if="isRevalidating"
+            :size="20"
+            title="Обновляем метрики..."
+          />
+        </div>
         <div class="space-y-4">
           <!-- Общие метрики -->
           <div class="text-sm space-y-1">
@@ -53,7 +60,6 @@
 
           <!-- Детализация по обязательным ключам -->
           <div class="pt-3 border-t border-gray-200">
-            <!-- ИЗМЕНЕНО: Заголовок и счетчик объединены в одну строку -->
             <div class="flex justify-between items-baseline text-sm mb-2">
               <h4 class="font-semibold text-gray-800">Обязательные ключи</h4>
               <span class="font-medium text-gray-600">
@@ -61,9 +67,7 @@
                 {{ result.metrics.requiredKeywordsTotal }}
               </span>
             </div>
-            <!-- Обертка для таблицы с рамкой -->
             <div class="border border-gray-200 rounded-md bg-white">
-              <!-- ИЗМЕНЕНО: Стилизован заголовок таблицы -->
               <div
                 class="flex justify-between text-xs font-semibold text-gray-500 uppercase px-2 py-1.5 bg-gray-100 border-b border-gray-200"
               >
@@ -93,7 +97,6 @@
 
           <!-- Детализация по необязательным ключам -->
           <div class="pt-3 border-t border-gray-200">
-            <!-- ИЗМЕНЕНО: Заголовок и счетчик объединены в одну строку -->
             <div class="flex justify-between items-baseline text-sm mb-2">
               <h4 class="font-semibold text-gray-800">Необязательные ключи</h4>
               <span class="font-medium text-gray-600">
@@ -101,9 +104,7 @@
                 {{ result.metrics.optionalKeywordsTotal }}
               </span>
             </div>
-            <!-- Обертка для таблицы с рамкой -->
             <div class="border border-gray-200 rounded-md bg-white">
-              <!-- ИЗМЕНЕНО: Стилизован заголовок таблицы -->
               <div
                 class="flex justify-between text-xs font-semibold text-gray-500 uppercase px-2 py-1.5 bg-gray-100 border-b border-gray-200"
               >
@@ -182,12 +183,7 @@
         </p>
       </div>
 
-      <!-- Контент -->
-      <div class="bg-white border border-gray-200 rounded-lg p-6">
-        <div class="prose max-w-none" v-html="formattedContent" />
-      </div>
-
-      <!-- НОВЫЙ БЛОК: Кнопка Перегенерации -->
+      <!-- Кнопка Перегенерации -->
       <div class="pt-6 border-t border-gray-200">
         <div class="flex justify-center">
           <button
@@ -203,6 +199,34 @@
             }}
           </button>
         </div>
+      </div>
+
+      <!-- Контент -->
+      <div class="bg-white border border-gray-200 rounded-lg p-6">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-semibold">Описание</h3>
+          <button
+            @click="commitEdits"
+            class="text-sm text-blue-600 hover:text-blue-800"
+          >
+            {{ isEditing ? "✅ Сохранить" : "✏️ Редактировать" }}
+          </button>
+        </div>
+
+        <!-- Режим просмотра -->
+        <div
+          v-if="!isEditing"
+          class="prose max-w-none"
+          v-html="formattedContent"
+        />
+
+        <!-- Режим редактирования -->
+        <textarea
+          v-else
+          v-model="editableContent"
+          rows="15"
+          class="w-full p-2 border border-gray-300 rounded-md font-mono text-sm focus:ring-blue-500 focus:border-blue-500"
+        ></textarea>
       </div>
 
       <!-- Кнопки действий -->
@@ -225,6 +249,7 @@
 </template>
 
 <script setup lang="ts">
+import { useDebounceFn } from "@vueuse/core";
 import type { GenerationResult, GenerationRequest } from "~/types";
 
 const props = defineProps<{
@@ -249,6 +274,40 @@ const saveSuccessMessage = ref("");
 const isRegenerating = ref(false);
 const router = useRouter();
 
+const isEditing = ref(false);
+const editableContent = ref("");
+const isRevalidating = ref(false);
+
+const revalidateContent = useDebounceFn(async () => {
+  if (!editableContent.value || !originalRequest.value) return;
+
+  isRevalidating.value = true;
+  try {
+    const newMetricsResult = await $fetch<GenerationResult>("/api/revalidate", {
+      method: "POST",
+      body: {
+        text: editableContent.value,
+        generationRequest: originalRequest.value,
+      },
+    });
+
+    if (result.value) {
+      result.value.metrics = newMetricsResult.metrics;
+      result.value.warnings = newMetricsResult.warnings;
+    }
+  } catch (err) {
+    console.error("Failed to revalidate content:", err);
+  } finally {
+    isRevalidating.value = false;
+  }
+}, 750);
+
+watch(editableContent, () => {
+  if (isEditing.value) {
+    revalidateContent();
+  }
+});
+
 const handleRegenerate = async () => {
   if (!originalRequest.value) {
     console.error("Cannot regenerate without original request data.");
@@ -256,21 +315,17 @@ const handleRegenerate = async () => {
   }
   isRegenerating.value = true;
   try {
-    // ИСПРАВЛЕНО: Вызываем СУЩЕСТВУЮЩИЙ API-эндпоинт /api/generate
     const response = await $fetch<{ taskId: string }>("/api/generate", {
       method: "POST",
       body: originalRequest.value,
     });
 
     if (response.taskId) {
-      // Перенаправляем пользователя на страницу новой задачи
       await router.push(`/tasks/${response.taskId}`);
-      // Перезагружаем страницу, чтобы сбросить состояние компонента
       window.location.reload();
     }
   } catch (err: any) {
     console.error("Failed to start regeneration:", err);
-    // Здесь можно добавить логику отображения ошибки пользователю
   } finally {
     isRegenerating.value = false;
   }
@@ -280,20 +335,24 @@ const checkStatus = async () => {
   try {
     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
 
-    // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
-    // Всегда обновляем originalRequest, если он пришел с сервера.
-    // Это гарантирует, что у нас всегда будут данные для повторной попытки.
     if (response && response.request) {
       originalRequest.value = response.request;
-      console.log(
-        "[checkStatus] Original request data has been updated/confirmed."
-      );
     }
 
-    // Теперь обрабатываем статус задачи
     if (response.status === "completed") {
       status.value = "completed";
       result.value = response.result || null;
+
+      // КЛЮЧЕВАЯ ЛОГИКА ДЛЯ ПЕРСИСТЕНТНОСТИ:
+      // При каждой загрузке данных с сервера, мы инициализируем
+      // поле для редактирования `editableContent` значением,
+      // которое хранится в базе данных (`result.value.description`).
+      // Таким образом, если пользователь сохранил изменения,
+      // при следующей загрузке он увидит именно их.
+      if (result.value) {
+        editableContent.value = result.value.description || "";
+      }
+
       if (!result.value) {
         status.value = "error";
         error.value = "Задача завершена, но результат генерации пуст.";
@@ -304,7 +363,6 @@ const checkStatus = async () => {
         response.result?.content ||
         "Произошла неизвестная ошибка в процессе генерации.";
     }
-    // Если статус 'processing', мы ничего не делаем, просто ждем следующего вызова.
   } catch (err: any) {
     status.value = "error";
     console.error("Failed to fetch task status:", err);
@@ -340,11 +398,6 @@ const checkStatus = async () => {
 };
 
 const handleRetry = () => {
-  console.log("--- [handleRetry] CLICKED ---");
-  console.log(
-    "Value of originalRequest at the moment of retry:",
-    originalRequest.value
-  );
   emit("reset", originalRequest.value);
 };
 
@@ -371,7 +424,7 @@ const optionalKeywordsList = computed(() => {
 const handleRefinement = async () => {
   if (
     !refinementPrompt.value.trim() ||
-    !result.value?.description ||
+    !editableContent.value ||
     !originalRequest.value
   ) {
     refinementError.value = "Не все данные для улучшения готовы.";
@@ -382,27 +435,22 @@ const handleRefinement = async () => {
   saveSuccessMessage.value = "";
   const payload = {
     productName: originalRequest.value.productName,
-    originalContent: result.value.description,
+    originalContent: editableContent.value,
     userPrompt: refinementPrompt.value,
     generationData: originalRequest.value,
-    originalTitle: result.value.title,
+    originalTitle: result.value?.title,
   };
 
-  // --- ДИАГНОСТИЧЕСКИЙ ЛОГ ---
-  console.log(
-    "Sending this payload to /api/refine:",
-    JSON.stringify(payload, null, 2)
-  );
   try {
     const newResult = await $fetch<GenerationResult>("/api/refine", {
       method: "POST",
       body: payload,
     });
     result.value = newResult;
+    editableContent.value = newResult.description || "";
     refinementPrompt.value = "";
   } catch (err: any) {
     refinementError.value = err.data?.message || "Не удалось улучшить текст.";
-    console.error("Validation error details from server:", err.data);
   } finally {
     isRefining.value = false;
   }
@@ -414,10 +462,18 @@ const handleSave = async () => {
   saveSuccessMessage.value = "";
   refinementError.value = "";
 
+  const resultToSave = { ...result.value };
+  // КЛЮЧЕВАЯ ЛОГИКА ДЛЯ ПЕРСИСТЕНТНОСТИ:
+  // Перед сохранением мы обновляем поля `description` и `content`
+  // в объекте результата, беря актуальные данные из поля
+  // для редактирования `editableContent`.
+  resultToSave.description = editableContent.value;
+  resultToSave.content = `**${resultToSave.title}**\n\n${editableContent.value}`;
+
   try {
     await $fetch(`/api/tasks/${props.taskId}`, {
       method: "PUT",
-      body: { result: result.value },
+      body: { result: resultToSave },
     });
     saveSuccessMessage.value = "✅ Результат успешно сохранен!";
     setTimeout(() => (saveSuccessMessage.value = ""), 3000);
@@ -429,19 +485,31 @@ const handleSave = async () => {
   }
 };
 
+const commitEdits = async () => {
+  // Мы сохраняем, только если выходим из режима редактирования
+  if (isEditing.value) {
+    await handleSave();
+  }
+  // В любом случае переключаем режим
+  isEditing.value = !isEditing.value;
+};
+
 const formattedContent = computed(() => {
-  if (!result.value?.content) return "";
-  return result.value.content
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\n/g, "<br>");
+  if (!editableContent.value) return "";
+  return (
+    `<strong>${result.value?.title || ""}</strong><br><br>` +
+    editableContent.value
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\n/g, "<br>")
+  );
 });
 
-// --- НОВОЕ ВЫЧИСЛЯЕМОЕ СВОЙСТВО ---
-// "Чистый" текст без Markdown для копирования
+// ИЗМЕНЕНО: Добавлено .replace() для удаления Markdown-разметки
 const plainTextContent = computed(() => {
-  if (!result.value?.content) return "";
-  // Удаляем ** и заменяем <br> обратно на переносы строк
-  return result.value.content.replace(/\*\*/g, "").replace(/<br>/g, "\n");
+  if (!result.value) return "";
+  // Берем актуальный текст из поля редактирования и очищаем его от "**"
+  const cleanDescription = editableContent.value.replace(/\*\*/g, "");
+  return `${result.value.title}\n\n${cleanDescription}`;
 });
 
 const copyToClipboard = async () => {
