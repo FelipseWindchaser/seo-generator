@@ -25,64 +25,233 @@
 
     <!-- Результат -->
     <div v-else-if="status === 'completed' && result" class="space-y-6">
-      <div class="bg-green-50 border border-green-200 rounded-lg p-4">
-        <h2 class="text-xl font-semibold text-green-800 mb-2">
-          ✅ Описание готово!
-        </h2>
+      <transition name="fade">
+        <div
+          v-if="showGenerationSuccessBanner"
+          class="bg-green-50 border border-green-200 rounded-lg p-4 text-center"
+        >
+          <h2 class="text-xl font-semibold text-green-800">
+            ✅ Описание успешно сгенерировано!
+          </h2>
+        </div>
+      </transition>
+
+      <!-- БЛОК 1: МЕТРИКИ ВАЛИДАТОРА -->
+      <div
+        v-if="result.metrics"
+        class="bg-slate-50 border border-slate-200 rounded-lg p-6 transition-colors"
+        :class="{ 'flash-success': metricsJustUpdated }"
+      >
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-semibold text-slate-800">SEO Метрики</h3>
+        </div>
+        <div class="flex flex-col space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-slate-600">Символов:</span>
+            <span class="font-medium text-slate-900">{{
+              result.metrics.charCount
+            }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-600">Плотность (обязательные ключи):</span>
+            <span class="font-medium text-slate-900"
+              >{{ result.metrics.keywordDensity?.toFixed(2) }}%</span
+            >
+          </div>
+        </div>
       </div>
 
-      <!-- Метрики -->
-      <div v-if="result.metrics" class="bg-gray-50 rounded-lg p-4">
-        <h3 class="font-medium text-gray-900 mb-3">Метрики</h3>
-        <div class="space-y-4">
-          <!-- Общие метрики -->
-          <div class="text-sm space-y-1">
-            <div class="flex justify-between">
-              <span class="text-gray-600">Символов:</span>
-              <span class="font-medium">{{ result.metrics.charCount }}</span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-gray-600"
-                >Плотность (по обязательным ключам):</span
-              >
-              <span class="font-medium"
-                >{{ result.metrics.keywordDensity?.toFixed(2) }}%</span
-              >
-            </div>
-          </div>
+      <!-- БЛОК 2: ЗАМЕЧАНИЯ ВАЛИДАТОРА -->
+      <div
+        v-if="result.warnings && result.warnings.length > 0"
+        class="bg-yellow-50 border border-yellow-200 rounded-lg p-6"
+      >
+        <h3 class="text-lg font-semibold text-yellow-900 mb-3">
+          ⚠️ Замечания валидатора
+        </h3>
+        <ul class="list-disc list-inside text-sm text-yellow-800 space-y-1">
+          <li v-for="(warning, index) in result.warnings" :key="index">
+            {{ warning }}
+          </li>
+        </ul>
+      </div>
 
-          <!-- Детализация по обязательным ключам -->
-          <div class="pt-3 border-t border-gray-200">
-            <!-- ИЗМЕНЕНО: Заголовок и счетчик объединены в одну строку -->
+      <!-- Сообщение об успехе сохранения для редактора -->
+      <transition name="fade">
+        <div
+          v-if="editorSaveSuccessMessage"
+          class="bg-green-100 border border-green-200 text-green-800 text-sm font-medium rounded-lg p-4 text-center"
+        >
+          {{ editorSaveSuccessMessage }}
+        </div>
+      </transition>
+
+      <!-- БЛОК 3: РЕДАКТОР ТЕКСТА И ОСНОВНЫЕ ДЕЙСТВИЯ -->
+      <div class="bg-white border border-slate-200 rounded-lg p-6">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-semibold text-slate-800">
+            Ваше SEO-описание
+          </h3>
+          <!-- ИЗМЕНЕНО: Логика кнопок -->
+          <div class="flex items-center gap-4">
+            <!-- Кнопки появляются только в режиме редактирования -->
+            <div v-if="isEditing" class="flex items-center gap-2">
+              <button
+                @click="cancelEdits"
+                class="px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-md text-sm font-medium transition-colors hover:bg-slate-200 hover:border-slate-300"
+              >
+                Отменить
+              </button>
+              <button
+                @click="commitEdits"
+                class="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-md text-sm font-medium transition-colors hover:bg-green-600"
+              >
+                <span>✅</span>
+                <span>Сохранить</span>
+              </button>
+            </div>
+            <!-- Кнопка "Редактировать" видна, когда не в режиме редактирования -->
+            <button
+              v-else
+              @click="startEditing"
+              class="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-md text-sm font-medium transition-colors hover:bg-slate-200 hover:border-slate-300"
+            >
+              <span>✏️</span>
+              <span>Редактировать</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-slate-200">
+          <div
+            v-if="!isEditing"
+            class="prose max-w-none prose-slate"
+            v-html="formattedContent"
+          />
+
+          <textarea
+            v-else
+            v-model="editableContent"
+            rows="15"
+            class="w-full p-3 border border-slate-300 rounded-md font-mono text-sm focus:ring-blue-500 focus:border-blue-500 transition bg-slate-50"
+          ></textarea>
+        </div>
+
+        <div
+          class="mt-6 pt-6 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-4"
+        >
+          <button
+            @click="handleRegenerate"
+            :disabled="isRegenerating"
+            class="w-full px-4 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 disabled:bg-slate-400 flex items-center justify-center text-sm font-medium"
+          >
+            <LoadingSpinner v-if="isRegenerating" class="mr-2" :size="16" />
+            {{ isRegenerating ? "Пересоздаем..." : "♻️ Перегенерировать" }}
+          </button>
+
+          <button
+            @click="copyToClipboard"
+            class="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center justify-center text-sm font-medium"
+          >
+            {{ copied ? "✅ Скопировано!" : "📋 Скопировать текст" }}
+          </button>
+
+          <button
+            @click="$emit('reset', null)"
+            class="w-full px-4 py-2 bg-slate-600 text-white rounded-md hover:bg-slate-700 text-sm font-medium flex items-center justify-center"
+          >
+            Создать новое описание
+          </button>
+        </div>
+      </div>
+      <transition name="fade">
+        <div
+          v-if="refineSaveSuccessMessage"
+          class="mt-4 bg-green-100 border border-green-200 text-green-800 text-sm font-medium rounded-lg p-4 text-center"
+        >
+          {{ refineSaveSuccessMessage }}
+        </div>
+      </transition>
+      <transition name="fade">
+        <div
+          v-if="refinementError"
+          class="mt-4 bg-red-100 border border-red-200 text-red-800 text-sm font-medium rounded-lg p-4 text-center"
+        >
+          {{ refinementError }}
+        </div>
+      </transition>
+      <!-- БЛОК 4: УЛУЧШЕНИЕ С ПОМОЩЬЮ ИИ (REFINE) -->
+      <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+        <h3 class="text-lg font-semibold text-slate-800 mb-2">
+          Улучшить с помощью ИИ
+        </h3>
+        <p class="text-sm text-slate-600 mb-4">
+          Введите команду, чтобы точечно изменить текст. Например: "Сделай тон
+          более официальным" или "Добавь эмодзи в конце".
+        </p>
+        <textarea
+          v-model="refinementPrompt"
+          rows="3"
+          class="w-full p-3 border border-slate-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 transition"
+          placeholder="Ваша команда для ИИ..."
+        ></textarea>
+        <div class="mt-4 flex flex-col sm:flex-row gap-4">
+          <button
+            @click="handleRefinement"
+            :disabled="isRefining || !refinementPrompt.trim()"
+            class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-slate-400 flex items-center justify-center font-medium"
+          >
+            <LoadingSpinner v-if="isRefining" class="mr-2" :size="20" />
+            {{ isRefining ? "Улучшаем..." : "🚀 Отправить команду" }}
+          </button>
+          <button
+            @click="handleSave('refine')"
+            :disabled="isSaving"
+            class="flex-1 px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:bg-slate-400 flex items-center justify-center font-medium"
+          >
+            <LoadingSpinner v-if="isSaving" class="mr-2" :size="20" />
+            {{ isSaving ? "Сохраняем..." : "💾 Сохранить результат" }}
+          </button>
+        </div>
+      </div>
+
+      <!-- БЛОК 5: РАСШИФРОВКА КЛЮЧЕВЫХ СЛОВ -->
+      <div
+        v-if="result.metrics"
+        class="bg-slate-50 border border-slate-200 rounded-lg p-6"
+      >
+        <h3 class="text-lg font-semibold text-slate-800 mb-4">
+          Расшифровка ключевых слов
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
             <div class="flex justify-between items-baseline text-sm mb-2">
-              <h4 class="font-semibold text-gray-800">Обязательные ключи</h4>
-              <span class="font-medium text-gray-600">
+              <h4 class="font-semibold text-slate-800">Обязательные</h4>
+              <span class="font-medium text-slate-600">
                 {{ result.metrics.requiredKeywordsUsed }} /
                 {{ result.metrics.requiredKeywordsTotal }}
               </span>
             </div>
-            <!-- Обертка для таблицы с рамкой -->
-            <div class="border border-gray-200 rounded-md bg-white">
-              <!-- ИЗМЕНЕНО: Стилизован заголовок таблицы -->
+            <div class="border border-slate-200 rounded-md bg-white">
               <div
-                class="flex justify-between text-xs font-semibold text-gray-500 uppercase px-2 py-1.5 bg-gray-100 border-b border-gray-200"
+                class="flex justify-between text-xs font-semibold text-slate-500 uppercase px-3 py-2 bg-slate-100 border-b border-slate-200"
               >
                 <span>Ключ</span>
                 <span>Кол-во</span>
               </div>
-              <ul class="text-xs">
+              <ul class="text-sm">
                 <li
                   v-for="(keyword, index) in requiredKeywordsList"
                   :key="keyword.name"
-                  class="flex justify-between items-center py-1.5 px-2"
-                  :class="{ 'border-t border-gray-100': index > 0 }"
+                  class="flex justify-between items-center py-2 px-3"
+                  :class="{ 'border-t border-slate-100': index > 0 }"
                 >
-                  <span class="text-gray-600">{{ keyword.name }}</span>
+                  <span class="text-slate-700">{{ keyword.name }}</span>
                   <span
                     :class="
                       keyword.count > 0 ? 'text-green-600' : 'text-red-600'
                     "
-                    class="font-mono bg-gray-200 px-1.5 py-0.5 rounded"
+                    class="font-mono bg-slate-200 text-xs px-2 py-0.5 rounded-full font-semibold"
                   >
                     {{ keyword.count }}
                   </span>
@@ -90,123 +259,45 @@
               </ul>
             </div>
           </div>
-
-          <!-- Детализация по необязательным ключам -->
-          <div class="pt-3 border-t border-gray-200">
-            <!-- ИЗМЕНЕНО: Заголовок и счетчик объединены в одну строку -->
+          <div>
             <div class="flex justify-between items-baseline text-sm mb-2">
-              <h4 class="font-semibold text-gray-800">Необязательные ключи</h4>
-              <span class="font-medium text-gray-600">
+              <h4 class="font-semibold text-slate-800">Необязательные</h4>
+              <span class="font-medium text-slate-600">
                 {{ result.metrics.optionalKeywordsUsed }} /
                 {{ result.metrics.optionalKeywordsTotal }}
               </span>
             </div>
-            <!-- Обертка для таблицы с рамкой -->
-            <div class="border border-gray-200 rounded-md bg-white">
-              <!-- ИЗМЕНЕНО: Стилизован заголовок таблицы -->
+            <div class="border border-slate-200 rounded-md bg-white">
               <div
-                class="flex justify-between text-xs font-semibold text-gray-500 uppercase px-2 py-1.5 bg-gray-100 border-b border-gray-200"
+                class="flex justify-between text-xs font-semibold text-slate-500 uppercase px-3 py-2 bg-slate-100 border-b border-slate-200"
               >
                 <span>Ключ</span>
                 <span>Кол-во</span>
               </div>
-              <ul class="text-xs">
+              <ul class="text-sm">
                 <li
                   v-for="(keyword, index) in optionalKeywordsList"
                   :key="keyword.name"
-                  class="flex justify-between items-center py-1.5 px-2"
-                  :class="{ 'border-t border-gray-100': index > 0 }"
+                  class="flex justify-between items-center py-2 px-3"
+                  :class="{ 'border-t border-slate-100': index > 0 }"
                 >
-                  <span class="text-gray-600">{{ keyword.name }}</span>
-                  <span class="font-mono bg-gray-200 px-1.5 py-0.5 rounded">{{
-                    keyword.count
-                  }}</span>
+                  <span class="text-slate-700">{{ keyword.name }}</span>
+                  <span
+                    class="font-mono bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold"
+                    >{{ keyword.count }}</span
+                  >
                 </li>
               </ul>
             </div>
           </div>
         </div>
       </div>
-
-      <!-- Предупреждения валидатора -->
-      <div
-        v-if="result.warnings && result.warnings.length > 0"
-        class="bg-yellow-50 border border-yellow-200 rounded-lg p-4"
-      >
-        <h4 class="font-medium text-yellow-800 mb-2">
-          ⚠️ Замечания валидатора:
-        </h4>
-        <ul class="list-disc list-inside text-sm text-yellow-700 space-y-1">
-          <li v-for="(warning, index) in result.warnings" :key="index">
-            {{ warning }}
-          </li>
-        </ul>
-      </div>
-
-      <!-- Блок Улучшения и Сохранения -->
-      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h3 class="font-medium text-gray-900 mb-3">Улучшить или Сохранить</h3>
-        <p class="text-sm text-gray-600 mb-3">
-          Вы можете внести правки с помощью ИИ или сохранить текущий результат,
-          даже если он не прошел валидацию.
-        </p>
-        <textarea
-          v-model="refinementPrompt"
-          rows="3"
-          class="w-full p-2 border border-gray-300 rounded-md"
-          placeholder="Например: Сделай текст более официальным..."
-        ></textarea>
-        <div class="mt-3 flex flex-col sm:flex-row gap-2">
-          <button
-            @click="handleRefinement"
-            :disabled="isRefining || !refinementPrompt.trim()"
-            class="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center"
-          >
-            <LoadingSpinner v-if="isRefining" class="mr-2" :size="20" />
-            {{ isRefining ? "Улучшаем..." : "🚀 Улучшить по промпту" }}
-          </button>
-          <button
-            @click="handleSave"
-            :disabled="isSaving"
-            class="flex-1 px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:bg-gray-400 flex items-center justify-center"
-          >
-            <LoadingSpinner v-if="isSaving" class="mr-2" :size="20" />
-            {{ isSaving ? "Сохраняем..." : "💾 Сохранить текущий результат" }}
-          </button>
-        </div>
-        <p v-if="refinementError" class="text-sm text-red-600 mt-2">
-          {{ refinementError }}
-        </p>
-        <p v-if="saveSuccessMessage" class="text-sm text-green-600 mt-2">
-          {{ saveSuccessMessage }}
-        </p>
-      </div>
-
-      <!-- Контент -->
-      <div class="bg-white border border-gray-200 rounded-lg p-6">
-        <div class="prose max-w-none" v-html="formattedContent" />
-      </div>
-
-      <!-- Кнопки действий -->
-      <div class="flex gap-4">
-        <button
-          @click="copyToClipboard"
-          class="flex-1 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-        >
-          {{ copied ? "✅ Скопировано!" : "📋 Скопировать текст" }}
-        </button>
-        <button
-          @click="$emit('reset', null)"
-          class="flex-1 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-        >
-          Создать новое описание
-        </button>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useDebounceFn } from "@vueuse/core";
 import type { GenerationResult, GenerationRequest } from "~/types";
 
 const props = defineProps<{
@@ -227,81 +318,116 @@ const refinementPrompt = ref("");
 const isRefining = ref(false);
 const refinementError = ref("");
 const isSaving = ref(false);
-const saveSuccessMessage = ref("");
+const refineSaveSuccessMessage = ref("");
+const editorSaveSuccessMessage = ref("");
+const isRegenerating = ref(false);
+const router = useRouter();
 
-// const checkStatus = async () => {
-//   try {
-//     const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
-//     if (response.status === "completed") {
-//       status.value = "completed";
-//       result.value = response?.result || null;
-//       originalRequest.value = response?.request || null;
-//       if (!result.value) {
-//         status.value = "error";
-//         error.value = "Задача завершена, но результат генерации отсутствует.";
-//       }
-//     } else if (response.status === "error") {
-//       status.value = "error";
-//       error.value =
-//         response.result?.content || "Произошла неизвестная ошибка на сервере.";
-//     }
-//   } catch (err: any) {
-//     // Обработка HTTP-ошибок, которые выбросил $fetch
-//     status.value = "error";
-//     console.error("Failed to fetch task status:", err);
+const isEditing = ref(false);
+const editableContent = ref("");
+const metricsJustUpdated = ref(false);
+const showGenerationSuccessBanner = ref(false);
+// ИЗМЕНЕНО: Новое состояние для хранения исходного текста
+const originalContentBeforeEdit = ref("");
 
-//     // Проверяем наличие statusCode в объекте ошибки
-//     if (err.statusCode) {
-//       switch (err.statusCode) {
-//         case 404:
-//           error.value =
-//             "Задача не найдена. Возможно, вы открыли неверную или устаревшую ссылку.";
-//           break;
-//         case 500:
-//           error.value =
-//             "Произошла критическая ошибка на сервере. Пожалуйста, попробуйте позже.";
-//           break;
-//         case 400:
-//           error.value = `Некорректный запрос к серверу: ${
-//             err.data?.message || "проверьте данные"
-//           }.`;
-//           break;
-//         // case 503:
-//         //   error.value = "Сервис перегружен. Пожалуйста, попробуйте позже.";
-//         //   break;
-//         default:
-//           error.value = `Произошла ошибка сети (код: ${err.statusCode}). Пожалуйста, проверьте ваше подключение.`;
-//           break;
-//       }
-//     } else {
-//       // Если statusCode отсутствует, скорее всего, это проблема с сетью (CORS, DNS и т.д.)
-//       error.value =
-//         "Не удалось связаться с сервером. Проверьте ваше интернет-соединение.";
-//     }
-//     // Останавливаем интервал, так как произошла окончательная ошибка
-//     if (intervalId) {
-//       clearInterval(intervalId);
-//     }
-//   }
-// };
+// ИЗМЕНЕНО: Новая функция для входа в режим редактирования
+const startEditing = () => {
+  // Сохраняем текущее состояние текста перед началом редактирования
+  originalContentBeforeEdit.value = editableContent.value;
+  isEditing.value = true;
+};
+
+// ИЗМЕНЕНО: Новая функция для отмены изменений
+const cancelEdits = () => {
+  // Возвращаем текст к сохраненному состоянию
+  editableContent.value = originalContentBeforeEdit.value;
+  isEditing.value = false;
+};
+
+// ИЗМЕНЕНО: Функция теперь только сохраняет и выходит из режима
+const commitEdits = async () => {
+  await handleSave("editor");
+  isEditing.value = false;
+};
+
+const revalidateContent = useDebounceFn(async () => {
+  if (!editableContent.value || !originalRequest.value) return;
+
+  try {
+    const newMetricsResult = await $fetch<GenerationResult>("/api/revalidate", {
+      method: "POST",
+      body: {
+        text: editableContent.value,
+        generationRequest: originalRequest.value,
+      },
+    });
+
+    if (result.value) {
+      result.value.metrics = newMetricsResult.metrics;
+      result.value.warnings = newMetricsResult.warnings;
+
+      metricsJustUpdated.value = true;
+      setTimeout(() => {
+        metricsJustUpdated.value = false;
+      }, 1000);
+    }
+  } catch (err) {
+    console.error("Failed to revalidate content:", err);
+  }
+}, 750);
+
+watch(editableContent, () => {
+  if (isEditing.value) {
+    revalidateContent();
+  }
+});
+
+const handleRegenerate = async () => {
+  if (!originalRequest.value) {
+    console.error("Cannot regenerate without original request data.");
+    return;
+  }
+  isRegenerating.value = true;
+  try {
+    const response = await $fetch<{ taskId: string }>("/api/generate", {
+      method: "POST",
+      body: originalRequest.value,
+    });
+
+    if (response.taskId) {
+      await router.push(`/tasks/${response.taskId}`);
+      window.location.reload();
+    }
+  } catch (err: any) {
+    console.error("Failed to start regeneration:", err);
+  } finally {
+    isRegenerating.value = false;
+  }
+};
+
 const checkStatus = async () => {
   try {
-    const response = (await $fetch(`/api/status/${props.taskId}`)) as any;
+    const response = (await $fetch(`/api/tasks/${props.taskId}`)) as any;
 
-    // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
-    // Всегда обновляем originalRequest, если он пришел с сервера.
-    // Это гарантирует, что у нас всегда будут данные для повторной попытки.
     if (response && response.request) {
       originalRequest.value = response.request;
-      console.log(
-        "[checkStatus] Original request data has been updated/confirmed."
-      );
     }
 
-    // Теперь обрабатываем статус задачи
     if (response.status === "completed") {
+      if (status.value !== "completed") {
+        showGenerationSuccessBanner.value = true;
+        setTimeout(() => {
+          showGenerationSuccessBanner.value = false;
+        }, 4000);
+      }
+
       status.value = "completed";
       result.value = response.result || null;
+
+      if (result.value) {
+        editableContent.value = result.value.description || "";
+      }
+
       if (!result.value) {
         status.value = "error";
         error.value = "Задача завершена, но результат генерации пуст.";
@@ -312,7 +438,6 @@ const checkStatus = async () => {
         response.result?.content ||
         "Произошла неизвестная ошибка в процессе генерации.";
     }
-    // Если статус 'processing', мы ничего не делаем, просто ждем следующего вызова.
   } catch (err: any) {
     status.value = "error";
     console.error("Failed to fetch task status:", err);
@@ -348,11 +473,6 @@ const checkStatus = async () => {
 };
 
 const handleRetry = () => {
-  console.log("--- [handleRetry] CLICKED ---");
-  console.log(
-    "Value of originalRequest at the moment of retry:",
-    originalRequest.value
-  );
   emit("reset", originalRequest.value);
 };
 
@@ -379,7 +499,7 @@ const optionalKeywordsList = computed(() => {
 const handleRefinement = async () => {
   if (
     !refinementPrompt.value.trim() ||
-    !result.value?.description ||
+    !editableContent.value ||
     !originalRequest.value
   ) {
     refinementError.value = "Не все данные для улучшения готовы.";
@@ -387,48 +507,54 @@ const handleRefinement = async () => {
   }
   isRefining.value = true;
   refinementError.value = "";
-  saveSuccessMessage.value = "";
+  refineSaveSuccessMessage.value = "";
   const payload = {
     productName: originalRequest.value.productName,
-    originalContent: result.value.description,
+    originalContent: editableContent.value,
     userPrompt: refinementPrompt.value,
     generationData: originalRequest.value,
-    originalTitle: result.value.title,
+    originalTitle: result.value?.title,
   };
 
-  // --- ДИАГНОСТИЧЕСКИЙ ЛОГ ---
-  console.log(
-    "Sending this payload to /api/refine:",
-    JSON.stringify(payload, null, 2)
-  );
   try {
     const newResult = await $fetch<GenerationResult>("/api/refine", {
       method: "POST",
       body: payload,
     });
     result.value = newResult;
+    editableContent.value = newResult.description || "";
     refinementPrompt.value = "";
   } catch (err: any) {
     refinementError.value = err.data?.message || "Не удалось улучшить текст.";
-    console.error("Validation error details from server:", err.data);
   } finally {
     isRefining.value = false;
   }
 };
 
-const handleSave = async () => {
+const handleSave = async (source: "editor" | "refine") => {
   if (!result.value) return;
   isSaving.value = true;
-  saveSuccessMessage.value = "";
+  refineSaveSuccessMessage.value = "";
+  editorSaveSuccessMessage.value = "";
   refinementError.value = "";
+
+  const resultToSave = { ...result.value };
+  resultToSave.description = editableContent.value;
+  resultToSave.content = `**${resultToSave.title}**\n\n${editableContent.value}`;
 
   try {
     await $fetch(`/api/tasks/${props.taskId}`, {
       method: "PUT",
-      body: { result: result.value },
+      body: { result: resultToSave },
     });
-    saveSuccessMessage.value = "✅ Результат успешно сохранен!";
-    setTimeout(() => (saveSuccessMessage.value = ""), 3000);
+
+    if (source === "editor") {
+      editorSaveSuccessMessage.value = "✅ Результат успешно сохранен!";
+      setTimeout(() => (editorSaveSuccessMessage.value = ""), 3000);
+    } else {
+      refineSaveSuccessMessage.value = "✅ Результат успешно сохранен!";
+      setTimeout(() => (refineSaveSuccessMessage.value = ""), 3000);
+    }
   } catch (err: any) {
     refinementError.value =
       err.data?.message || "Не удалось сохранить результат.";
@@ -438,18 +564,19 @@ const handleSave = async () => {
 };
 
 const formattedContent = computed(() => {
-  if (!result.value?.content) return "";
-  return result.value.content
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\n/g, "<br>");
+  if (!editableContent.value) return "";
+  return (
+    `<strong>${result.value?.title || ""}</strong><br><br>` +
+    editableContent.value
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\n/g, "<br>")
+  );
 });
 
-// --- НОВОЕ ВЫЧИСЛЯЕМОЕ СВОЙСТВО ---
-// "Чистый" текст без Markdown для копирования
 const plainTextContent = computed(() => {
-  if (!result.value?.content) return "";
-  // Удаляем ** и заменяем <br> обратно на переносы строк
-  return result.value.content.replace(/\*\*/g, "").replace(/<br>/g, "\n");
+  if (!result.value) return "";
+  const cleanDescription = editableContent.value.replace(/\*\*/g, "");
+  return `${result.value.title}\n\n${cleanDescription}`;
 });
 
 const copyToClipboard = async () => {
@@ -483,3 +610,28 @@ onUnmounted(() => {
   }
 });
 </script>
+
+<style scoped>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.5s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+@keyframes flash-bg {
+  from {
+    background-color: theme("colors.blue.100");
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.flash-success {
+  animation: flash-bg 1s ease-out;
+}
+</style>

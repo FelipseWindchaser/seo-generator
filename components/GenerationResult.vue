@@ -92,16 +92,34 @@
           <h3 class="text-lg font-semibold text-slate-800">
             Ваше SEO-описание
           </h3>
-          <button
-            @click="commitEdits"
-            class="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-md text-sm font-medium transition-colors hover:bg-slate-200 hover:border-slate-300"
-          >
-            <span v-if="isEditing">✅</span>
-            <span v-else>✏️</span>
-            <span>{{
-              isEditing ? "Сохранить изменения" : "Редактировать"
-            }}</span>
-          </button>
+          <!-- ИЗМЕНЕНО: Логика кнопок -->
+          <div class="flex items-center gap-4">
+            <!-- Кнопки появляются только в режиме редактирования -->
+            <div v-if="isEditing" class="flex items-center gap-2">
+              <button
+                @click="cancelEdits"
+                class="px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-md text-sm font-medium transition-colors hover:bg-slate-200 hover:border-slate-300"
+              >
+                Отменить
+              </button>
+              <button
+                @click="commitEdits"
+                class="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-md text-sm font-medium transition-colors hover:bg-green-600"
+              >
+                <span>✅</span>
+                <span>Сохранить</span>
+              </button>
+            </div>
+            <!-- Кнопка "Редактировать" видна, когда не в режиме редактирования -->
+            <button
+              v-else
+              @click="startEditing"
+              class="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-200 rounded-md text-sm font-medium transition-colors hover:bg-slate-200 hover:border-slate-300"
+            >
+              <span>✏️</span>
+              <span>Редактировать</span>
+            </button>
+          </div>
         </div>
 
         <div class="mt-4 pt-4 border-t border-slate-200">
@@ -146,7 +164,6 @@
           </button>
         </div>
       </div>
-      <!-- Сообщения об успехе/ошибке для блока refine -->
       <transition name="fade">
         <div
           v-if="refineSaveSuccessMessage"
@@ -310,12 +327,27 @@ const isEditing = ref(false);
 const editableContent = ref("");
 const metricsJustUpdated = ref(false);
 const showGenerationSuccessBanner = ref(false);
+// ИЗМЕНЕНО: Новое состояние для хранения исходного текста
+const originalContentBeforeEdit = ref("");
 
+// ИЗМЕНЕНО: Новая функция для входа в режим редактирования
+const startEditing = () => {
+  // Сохраняем текущее состояние текста перед началом редактирования
+  originalContentBeforeEdit.value = editableContent.value;
+  isEditing.value = true;
+};
+
+// ИЗМЕНЕНО: Новая функция для отмены изменений
+const cancelEdits = () => {
+  // Возвращаем текст к сохраненному состоянию
+  editableContent.value = originalContentBeforeEdit.value;
+  isEditing.value = false;
+};
+
+// ИЗМЕНЕНО: Функция теперь только сохраняет и выходит из режима
 const commitEdits = async () => {
-  if (isEditing.value) {
-    await handleSave("editor");
-  }
-  isEditing.value = !isEditing.value;
+  await handleSave("editor");
+  isEditing.value = false;
 };
 
 const revalidateContent = useDebounceFn(async () => {
@@ -386,7 +418,7 @@ const checkStatus = async () => {
         showGenerationSuccessBanner.value = true;
         setTimeout(() => {
           showGenerationSuccessBanner.value = false;
-        }, 2000);
+        }, 4000);
       }
 
       status.value = "completed";
@@ -518,10 +550,10 @@ const handleSave = async (source: "editor" | "refine") => {
 
     if (source === "editor") {
       editorSaveSuccessMessage.value = "✅ Результат успешно сохранен!";
-      setTimeout(() => (editorSaveSuccessMessage.value = ""), 2000);
+      setTimeout(() => (editorSaveSuccessMessage.value = ""), 3000);
     } else {
       refineSaveSuccessMessage.value = "✅ Результат успешно сохранен!";
-      setTimeout(() => (refineSaveSuccessMessage.value = ""), 2000);
+      setTimeout(() => (refineSaveSuccessMessage.value = ""), 3000);
     }
   } catch (err: any) {
     refinementError.value =
