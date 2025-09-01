@@ -6,6 +6,7 @@ import type {
   GenerationResult,
   ValidationResult,
   KeywordDetail,
+  AnalysisDetail,
 } from "~/types";
 import { ContentValidator } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
@@ -403,16 +404,22 @@ async function runGenerationWithValidation(
     const title = finalState.title;
     const validationResult = finalState.validationResult!;
 
-    const additionalChecks = checkAdditionalRequirements(finalContent, data);
-    return prepareFinalResult(
-      title,
-      finalContent,
-      validationResult,
-      additionalChecks,
-      finalState.attempts,
-      validationResult.isValid
-    );
-  } catch (error: any) {
+     // ИЗВЛЕКАЕМ НОВЫЕ ДАННЫЕ
+     const analysisResult = finalState.analysisResult; 
+
+     // checkAdditionalRequirements теперь не нужна, так как анализ делает граф
+     // const additionalChecks = checkAdditionalRequirements(finalContent, data);
+ 
+     return prepareFinalResult(
+       title,
+       finalContent,
+       validationResult,
+       // additionalChecks, // Больше не используем
+       analysisResult, // ПЕРЕДАЕМ РЕЗУЛЬТАТ АНАЛИЗА
+       finalState.attempts,
+       validationResult.isValid
+     );
+   } catch (error: any) {
     console.error(`[Generator] LangGraph process failed:`, error);
     const errorMessage = handleGoogleAIError(error).statusMessage;
     const errorResult: GenerationResult = {
@@ -431,7 +438,8 @@ export function prepareFinalResult(
   title: string,
   content: string,
   validation: ValidationResult,
-  additionalChecks: { issues: string[]; checks: any },
+  // additionalChecks: { issues: string[]; checks: any },
+  analysis: { utpAnalysis: AnalysisDetail[], painPointAnalysis: AnalysisDetail[] } | null, // ДОБАВЛЯЕМ
   attempts: number,
   success: boolean,
   processingLog: { added: string[]; removed: string[] } = {
@@ -463,11 +471,11 @@ export function prepareFinalResult(
     metrics: {
       ...validation.metrics,
       keywordDetails: keywordDetails,
-      boldKeywordsCount: additionalChecks.checks.boldKeywords,
-      utpCovered: additionalChecks.checks.utpCovered,
-      painPointsAddressed: additionalChecks.checks.painPointsAddressed,
-      trustTriggers: additionalChecks.checks.trustTriggers,
+      // Считаем boldKeywords прямо здесь
+      boldKeywordsCount: (content.match(/\*\*/g) || []).length / 2,
     },
+    // ДОБАВЛЯЕМ НОВОЕ ПОЛЕ
+    analysis: analysis || undefined,
     attempts,
     processingLog,
     warnings: validation.issues,

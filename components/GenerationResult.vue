@@ -76,6 +76,76 @@
         </ul>
       </div>
 
+      <!-- =============================================================== -->
+      <!-- ================= НОВЫЙ БЛОК: АНАЛИЗ СОДЕРЖАНИЯ ================ -->
+      <!-- =============================================================== -->
+      <div
+        v-if="result.analysis"
+        class="bg-slate-50 border border-slate-200 rounded-lg p-6"
+      >
+        <h3 class="text-lg font-semibold text-slate-800 mb-4">
+          Анализ содержания
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <!-- Колонка УТП -->
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-3">Раскрытие УТП</h4>
+            <ul class="space-y-4">
+              <li
+                v-for="(item, index) in result.analysis.utpAnalysis"
+                :key="`utp-${index}`"
+              >
+                <div class="flex items-start">
+                  <span class="mr-3 text-xl">{{
+                    item.isCovered ? "✅" : "❌"
+                  }}</span>
+                  <div class="flex-1">
+                    <p class="text-sm font-medium text-slate-800">
+                      {{ item.point }}
+                    </p>
+                    <blockquote
+                      v-if="item.isCovered"
+                      class="mt-1 text-xs text-slate-500 border-l-2 border-green-400 pl-2 italic"
+                    >
+                      "{{ item.evidence }}"
+                    </blockquote>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </div>
+          <!-- Колонка Болей -->
+          <div>
+            <h4 class="font-semibold text-slate-700 mb-3">
+              Отработка "болей" из отзывов
+            </h4>
+            <ul class="space-y-4">
+              <li
+                v-for="(item, index) in result.analysis.painPointAnalysis"
+                :key="`pain-${index}`"
+              >
+                <div class="flex items-start">
+                  <span class="mr-3 text-xl">{{
+                    item.isCovered ? "✅" : "❌"
+                  }}</span>
+                  <div class="flex-1">
+                    <p class="text-sm font-medium text-slate-800">
+                      {{ item.point }}
+                    </p>
+                    <blockquote
+                      v-if="item.isCovered"
+                      class="mt-1 text-xs text-slate-500 border-l-2 border-green-400 pl-2 italic"
+                    >
+                      "{{ item.evidence }}"
+                    </blockquote>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       <!-- Сообщение об успехе сохранения для редактора -->
       <transition name="fade">
         <div

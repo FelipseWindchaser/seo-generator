@@ -3,34 +3,52 @@
 import { StateGraph, END } from "@langchain/langgraph";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
-import type { GenerationRequest } from "~/types";
+import { z } from "zod";
+import type { GenerationRequest, AnalysisDetail } from "~/types";
 import { getModel, ModelProvider } from "./langchain.service";
 import { ContentValidator, StructuredValidationResult } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
 
 const validator = new ContentValidator();
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 8; // Увеличиваем лимит, так как добавились новые шаги
 const MAX_CONTENT_LENGTH = 2000;
 
-// --- 1. ОПРЕДЕЛЕНИЕ СОСТОЯНИЯ ГРАФА ---
+// --- 1. РАСШИРЕНИЕ СОСТОЯНИЯ ГРАФА ---
+
+/**
+ * @description Структура для хранения результатов анализа контента.
+ */
+interface ContentAnalysisResult {
+  utpAnalysis: AnalysisDetail[];
+  painPointAnalysis: AnalysisDetail[];
+  uncoveredUtps: string[];
+  uncoveredPainPoints: string[];
+  isFullyCovered: boolean;
+}
+
+/**
+ * @description Обновленное состояние графа, включающее результаты анализа.
+ */
 interface AgentState {
   generationRequest: GenerationRequest;
   generatedContent: string;
   validationResult: StructuredValidationResult | null;
+  analysisResult: ContentAnalysisResult | null; // НОВОЕ ПОЛЕ
   attempts: number;
   title: string;
 }
 
 // --- 2. ОПРЕДЕЛЕНИЕ УЗЛОВ-СПЕЦИАЛИСТОВ ---
 
-// Узел для первоначальной генерации
+// Узлы generateNode, truncateNode, extendNode, fixKeysNode, validateNode остаются без изменений.
+// ... (код этих узлов)
 const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Initial generation with streaming...`);
   const { generationRequest } = state;
   
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { 
     temperature: 0.7,
-    maxOutputTokens: 530 // Генерируем с запасом
+    maxOutputTokens: 530 
   });
   
   const prompt = ChatPromptTemplate.fromTemplate(`
@@ -71,7 +89,6 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
   });
 
   let responseText = "";
-  // Стримим до тех пор, пока не превысим МАКСИМАЛЬНУЮ длину
   for await (const chunk of stream) {
     responseText += chunk;
     if (responseText.length > MAX_CONTENT_LENGTH) {
@@ -85,154 +102,285 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
   const title = titleMatch ? titleMatch[1].trim() : generationRequest.productName;
   const content = descriptionMatch ? descriptionMatch[1].trim() : responseText;
   
-  // ИСПРАВЛЕНО: Узел НЕ вызывает обрезку. Он возвращает "сырой" результат.
   console.log(`[generateNode] Raw content generated. Length: ${content.length}`);
   return { generatedContent: content, title: title, attempts: 1 };
 };
 
-// Программный узел для сокращения текста
 const truncateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Truncating text programmatically...`);
   const { generatedContent } = state;
-  
-  // Этот узел теперь ЕДИНСТВЕННЫЙ, кто отвечает за обрезку
   const { newContent } = intelligentTruncate(generatedContent, MAX_CONTENT_LENGTH);
-  
   console.log(`[Trimmer] Truncated text from ${generatedContent.length} to ${newContent.length}.`);
-  
   return { generatedContent: newContent, attempts: state.attempts + 1 };
 };
 
-// Узел для расширения текста
 const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Extending text...`);
   const { generationRequest, generatedContent } = state;
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 580 });
-  
   const prompt = ChatPromptTemplate.fromTemplate(`
-Ты — креативный копирайтер. Твоя задача — органично расширить текст, чтобы его объем попал в диапазон 1800–2000 символов.
-
---- ИСХОДНЫЙ ТЕКСТ ---
-{text}
-
---- КОНТЕКСТ ---
-- Текущая длина: {currentLength} символов.
-- Целевая длина: 1800-2000 символов.
-- УТП, которые можно раскрыть подробнее: {usp}
-- Проблемы из отзывов, которые можно обыграть как преимущества: {reviews}
-
---- ЗАДАЧА ---
-1.  Проанализируй исходный текст и данные.
-2.  Добавь **один** новый, логически связанный абзац (2-4 предложения), раскрывающий одно из УТП или преимуществ.
-3.  **КРИТИЧЕСКИ ВАЖНО:** В новом абзаце старайся **не использовать** обязательные ключевые слова, чтобы не увеличивать их плотность.
-
-Верни ТОЛЬКО полный текст с новым абзацем. Без комментариев.
-  `);
-  
+    Ты — креативный копирайтер. Твоя задача — органично расширить текст, чтобы его объем попал в диапазон 1800–2000 символов.
+    
+    --- ИСХОДНЫЙ ТЕКСТ ---
+    {text}
+    
+    --- КОНТЕКСТ ---
+    - Текущая длина: {currentLength} символов.
+    - Целевая длина: 1800-2000 символов.
+    - УТП, которые можно раскрыть подробнее: {usp}
+    - Проблемы из отзывов, которые можно обыграть как преимущества: {reviews}
+    
+    --- ЗАДАЧА ---
+    1.  Проанализируй исходный текст и данные.
+    2.  Добавь **один** новый, логически связанный абзац (2-4 предложения), раскрывающий одно из УТП или преимуществ.
+    3.  **КРИТИЧЕСКИ ВАЖНО:** В новом абзаце старайся **не использовать** обязательные ключевые слова, чтобы не увеличивать их плотность.
+    
+    Верни ТОЛЬКО полный текст с новым абзацем. Без комментариев.
+      `);
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
   const newParagraph = await chain.invoke({ 
-      text: generatedContent,
-      currentLength: generatedContent.length,
-      usp: generationRequest.usp.join(', '),
-      reviews: generationRequest.reviews,
-  });
-
-  // ИСПРАВЛЕНО: Узел НЕ вызывает обрезку. Он просто добавляет новый абзац.
-  // Если результат станет слишком длинным, это обнаружит `validateNode`.
+    text: generatedContent,
+    currentLength: generatedContent.length,
+    usp: generationRequest.usp.join(', '),
+    reviews: generationRequest.reviews,
+});
   const newContent = `${generatedContent}\n\n${newParagraph}`;
-  
   return { generatedContent: newContent, attempts: state.attempts + 1 };
 };
 
-// Узел-специалист по вставке пропущенных ключей
 const fixKeysNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Fixing missing keywords...`);
   const { generationRequest, generatedContent, validationResult } = state;
-  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.2 }); // Низкая температура для точности
-  
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.2 });
   const prompt = ChatPromptTemplate.fromTemplate(`
-Ты — редактор-хирург. Твоя задача — взять текст и список недостающих ключевых слов, а затем вернуть ПОЛНЫЙ текст, в который эти слова аккуратно интегрированы.
-
---- ИСХОДНЫЙ ТЕКСТ ---
-{text}
-
---- НЕДОСТАЮЩИЕ КЛЮЧИ (вставь каждый по одному разу) ---
-{missingKeywords}
-
---- ЗАДАЧА ---
-Аккуратно интегрируй "НЕДОСТАЮЩИЕ КЛЮЧИ" в "ИСХОДНЫЙ ТЕКСТ".
-- Найди наиболее логичные места для вставки в первых двух-трех абзацах. Не вставляй ключи в последний абзац.
-- Слегка перепиши те предложения, куда планируешь вставить ключи, чтобы они выглядели органично.
-- **КРИТИЧЕСКИ ВАЖНО:** Не добавляй новые абзацы и не удаляй важную информацию. Твоя цель — минимальные, точечные изменения.
-
-Верни ПОЛНЫЙ И ИСПРАВЛЕННЫЙ ТЕКСТ. Не пиши ничего, кроме самого текста.
-  `);
-  
+    Ты — редактор-хирург. Твоя задача — взять текст и список недостающих ключевых слов, а затем вернуть ПОЛНЫЙ текст, в который эти слова аккуратно интегрированы.
+    
+    --- ИСХОДНЫЙ ТЕКСТ ---
+    {text}
+    
+    --- НЕДОСТАЮЩИЕ КЛЮЧИ (вставь каждый по одному разу) ---
+    {missingKeywords}
+    
+    --- ЗАДАЧА ---
+    Аккуратно интегрируй "НЕДОСТАЮЩИЕ КЛЮЧИ" в "ИСХОДНЫЙ ТЕКСТ".
+    - Найди наиболее логичные места для вставки в первых двух-трех абзацах. Не вставляй ключи в последний абзац.
+    - Слегка перепиши те предложения, куда планируешь вставить ключи, чтобы они выглядели органично.
+    - **КРИТИЧЕСКИ ВАЖНО:** Не добавляй новые абзацы и не удаляй важную информацию. Твоя цель — минимальные, точечные изменения.
+    
+    Верни ПОЛНЫЙ И ИСПРАВЛЕННЫЙ ТЕКСТ. Не пиши ничего, кроме самого текста.
+      `);
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
   const content = await chain.invoke({ 
-      text: generatedContent, 
-      missingKeywords: JSON.stringify(validationResult?.metrics.missingKeywords || []),
-  });
-  return { generatedContent: content, attempts: state.attempts + 1 };
+    text: generatedContent, 
+    missingKeywords: JSON.stringify(validationResult?.metrics.missingKeywords || []),
+});
+return { generatedContent: content, attempts: state.attempts + 1 };
 };
 
-// Узел валидации
 const validateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
-console.log("[Graph] Validation node...");
-const { generatedContent, generationRequest } = state;
-const result = await validator.validate(generatedContent, generationRequest.requiredKeywords, generationRequest.optionalKeywords);
-return { validationResult: result };
+  console.log("[Graph] Validation node...");
+  const { generatedContent, generationRequest } = state;
+  const result = await validator.validate(generatedContent, generationRequest.requiredKeywords, generationRequest.optionalKeywords);
+  return { validationResult: result };
 };
 
-// --- 3. "УМНЫЙ ДИСПЕТЧЕР" (Маршрутизатор) (без изменений) ---
-const routeAfterValidation = (state: AgentState): "truncate" | "extend" | "fix" | "__end__" => {
-  const status = state.validationResult?.status;
-  const issues = state.validationResult?.issues || [];
-  console.log(`[Router] Status: ${status}, Attempts: ${state.attempts}`);
 
-  if (state.attempts >= MAX_ATTEMPTS || status === "OK") {
+// --- НОВЫЕ УЗЛЫ ДЛЯ АНАЛИЗА И КОРРЕКЦИИ КОНТЕНТА ---
+
+/**
+ * @description Zod-схема для парсинга ответа от LLM-анализатора.
+ */
+const analysisSchema = z.object({
+  utpAnalysis: z.array(z.object({
+    point: z.string().describe("Исходный текст УТП"),
+    isCovered: z.boolean().describe("Раскрыто ли УТП в тексте"),
+    evidence: z.string().describe("Цитата из текста, доказывающая раскрытие, или пустая строка"),
+  })),
+  painPointAnalysis: z.array(z.object({
+    point: z.string().describe("Исходная 'боль' из отзыва"),
+    isCovered: z.boolean().describe("Отработана ли 'боль' в тексте"),
+    evidence: z.string().describe("Цитата из текста, доказывающая отработку, или пустая строка"),
+  })),
+});
+
+// ИЗМЕНЕНО: Создаем тип TypeScript из Zod-схемы
+type AnalysisResponseType = z.infer<typeof analysisSchema>;
+
+/**
+ * @description Узел-анализатор. Проверяет, раскрыты ли УТП и "боли" в тексте.
+ */
+const analyzeContentNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  console.log(`[Graph] Analyzing content coverage...`);
+  const { generationRequest, generatedContent } = state;
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.0 });
+
+  const prompt = ChatPromptTemplate.fromTemplate(`
+    Ты — беспристрастный аналитик контента. Твоя задача — проверить, раскрывает ли предоставленный ТЕКСТ каждый пункт из списков УТП и БОЛЕЙ.
+
+    --- ТЕКСТ ДЛЯ АНАЛИЗА ---
+    {text}
+
+    --- СПИСОК УТП (Уникальные Торговые Преимущества) ---
+    {usp}
+
+    --- СПИСОК БОЛЕЙ (Проблемы из отзывов, которые нужно отработать) ---
+    {reviews}
+
+    --- ЗАДАЧА ---
+    Для КАЖДОГО пункта из УТП и БОЛЕЙ дай бинарный ответ (true/false) и найди одно предложение-доказательство в тексте.
+    - isCovered: true, если идея пункта ЯВНО и ОДНОЗНАЧНО раскрыта в тексте.
+    - isCovered: false, если идея не раскрыта, либо упомянута косвенно.
+    - evidence: Если isCovered: true, приведи точную цитату (одно предложение) из текста. Если false, оставь пустую строку.
+
+    КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON, соответствующем схеме.
+  `);
+
+  const chain = prompt.pipe(model.withStructuredOutput(analysisSchema));
+  const response = await chain.invoke({
+    text: generatedContent,
+    usp: JSON.stringify(generationRequest.usp),
+    reviews: generationRequest.reviews,
+  }) as AnalysisResponseType;
+
+  // ИЗМЕНЕНО: Явно типизируем `item`, чтобы TypeScript был спокоен
+  const uncoveredUtps = response.utpAnalysis
+    .filter((item: { isCovered: boolean }) => !item.isCovered)
+    .map((item: { point: string }) => item.point);
+    
+  const uncoveredPainPoints = response.painPointAnalysis
+    .filter((item: { isCovered: boolean }) => !item.isCovered)
+    .map((item: { point: string }) => item.point);
+
+  const analysisResult: ContentAnalysisResult = {
+    ...response,
+    uncoveredUtps,
+    uncoveredPainPoints,
+    isFullyCovered: uncoveredUtps.length === 0 && uncoveredPainPoints.length === 0,
+  };
+
+  return { analysisResult, attempts: state.attempts + 1 };
+};
+
+/**
+ * @description Узел-корректор. Встраивает недостающие УТП и "боли" в текст.
+ */
+const fixContentNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  console.log(`[Graph] Fixing content coverage...`);
+  const { generationRequest, generatedContent, analysisResult } = state;
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.5 });
+
+  const prompt = ChatPromptTemplate.fromTemplate(`
+    Ты — талантливый редактор. Твоя задача — аккуратно доработать текст, чтобы он раскрывал недостающие маркетинговые тезисы.
+
+    --- ИСХОДНЫЙ ТЕКСТ ---
+    {text}
+
+    --- НЕДОСТАЮЩИЕ ТЕЗИСЫ (нужно интегрировать в текст) ---
+    - Нераскрытые УТП: {uncoveredUtps}
+    - Неотработанные "боли": {uncoveredPainPoints}
+
+    --- ПРАВИЛА РЕДАКТИРОВАНИЯ ---
+    1.  **Интегрируй, а не добавляй:** Найди в тексте наиболее подходящие по смыслу места и перепиши существующие предложения, чтобы включить в них идеи из "недостающих тезисов".
+    2.  **Не создавай новые абзацы.**
+    3.  **Сохраняй объем:** Старайся не увеличивать общую длину текста. Если нужно что-то добавить, сократи другое, менее важное предложение.
+    4.  **Не трогай SEO-ключи:** Постарайся сохранить все обязательные ключевые слова, которые уже есть в тексте.
+
+    Верни ТОЛЬКО полный, исправленный текст. Без комментариев.
+  `);
+
+  const chain = prompt.pipe(model).pipe(new StringOutputParser());
+  const newContent = await chain.invoke({
+    text: generatedContent,
+    uncoveredUtps: JSON.stringify(analysisResult?.uncoveredUtps || []),
+    uncoveredPainPoints: JSON.stringify(analysisResult?.uncoveredPainPoints || []),
+  });
+
+  return { generatedContent: newContent, attempts: state.attempts + 1 };
+};
+
+
+// --- 3. ОБНОВЛЕННЫЙ МАРШРУТИЗАТОР ---
+
+const routeAfterValidation = (state: AgentState): "truncate" | "extend" | "fix_keys" | "analyze_content" | "__end__" => {
+  const seoStatus = state.validationResult?.status;
+  console.log(`[Router] SEO Status: ${seoStatus}, Attempts: ${state.attempts}`);
+
+  if (state.attempts >= MAX_ATTEMPTS) {
+    console.log('[Router] Max attempts reached. Ending.');
     return "__end__";
   }
 
-  const hasMissingKeys = issues.some(issue => issue.includes("Отсутствует обязательный ключ"));
-  
-  if (hasMissingKeys) {
-      return "fix";
-  }
-  
-  if (status === "TOO_LONG") {
-      return "truncate";
-  }
-  
-  if (status === "TOO_SHORT") {
-      return "extend";
+  // Сначала решаем все SEO-проблемы
+  if (seoStatus === "MISSING_KEYS") return "fix_keys";
+  if (seoStatus === "TOO_LONG") return "truncate";
+  if (seoStatus === "TOO_SHORT") return "extend";
+
+  // Если с SEO все в порядке, переходим к анализу контента
+  if (seoStatus === "OK" || seoStatus === "NON_CRITICAL_ERRORS") {
+    return "analyze_content";
   }
 
+  // Если статус неизвестен, но попытки не исчерпаны - завершаем
   return "__end__";
 };
 
-// --- 4. СБОРКА ГРАФА (без изменений) ---
+/**
+ * @description Маршрутизатор после анализа контента.
+ */
+const routeAfterAnalysis = (state: AgentState): "fix_content" | "__end__" => {
+  const isCovered = state.analysisResult?.isFullyCovered;
+  console.log(`[Router] Content coverage: ${isCovered ? 'OK' : 'Needs fixing'}`);
+
+  if (isCovered || state.attempts >= MAX_ATTEMPTS) {
+    return "__end__";
+  } else {
+    return "fix_content";
+  }
+};
+
+
+// --- 4. ОБНОВЛЕННАЯ СБОРКА ГРАФА ---
+
 const generativeAgent = new StateGraph<AgentState>({
   channels: {
     generationRequest: { value: (x, y) => y ?? x },
     generatedContent: { value: (x, y) => y ?? x },
     validationResult: { value: (x, y) => y ?? x },
+    analysisResult: { value: (x, y) => y ?? x }, // НОВОЕ ПОЛЕ
     attempts: { value: (x, y) => y ?? x, default: () => 0 },
     title: { value: (x, y) => y ?? x },
   },
 })
   .addNode("generate", generateNode)
-  .addNode("validate", validateNode)
   .addNode("truncate", truncateNode)
   .addNode("extend", extendNode)
-  .addNode("fix", fixKeysNode)
-  // ИСПРАВЛЕННЫЕ РЕБРА
+  .addNode("fix_keys", fixKeysNode)
+  .addNode("validate", validateNode)
+  .addNode("analyze_content", analyzeContentNode) // НОВЫЙ УЗЕЛ
+  .addNode("fix_content", fixContentNode)       // НОВЫЙ УЗЕЛ
+
   .addEdge("__start__", "generate")
-  .addEdge("generate", "truncate") // После генерации ВСЕГДА на обрезку
-  .addEdge("extend", "truncate")   // После расширения ВСЕГДА на обрезку
-  .addEdge("fix", "truncate")      // После исправления ключей ВСЕГДА на обрезку
-  .addEdge("truncate", "validate") // И только после обрезки - на валидацию
-  .addConditionalEdges("validate", routeAfterValidation)
+  .addEdge("generate", "truncate")
+  .addEdge("extend", "truncate")
+  .addEdge("fix_keys", "truncate")
+  .addEdge("truncate", "validate")
+  
+  // После исправления контента мы снова идем на обрезку и валидацию,
+  // чтобы убедиться, что SEO не сломалось окончательно.
+  .addEdge("fix_content", "truncate")
+
+  // Условные переходы
+  .addConditionalEdges("validate", routeAfterValidation, {
+    "fix_keys": "fix_keys",
+    "truncate": "truncate",
+    "extend": "extend",
+    "analyze_content": "analyze_content",
+    "__end__": END,
+  })
+  .addConditionalEdges("analyze_content", routeAfterAnalysis, {
+    "fix_content": "fix_content",
+    "__end__": END,
+  })
   .compile();
 
 export { generativeAgent };

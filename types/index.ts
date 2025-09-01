@@ -130,6 +130,16 @@ export interface GenerationResult {
     added: string[];
     removed: string[];
   };
+  analysis?: {
+    utpAnalysis: AnalysisDetail[];
+    painPointAnalysis: AnalysisDetail[];
+  };
+}
+
+export interface AnalysisDetail {
+  point: string;
+  isCovered: boolean;
+  evidence: string;
 }
 
 /**
@@ -144,3 +154,4 @@ export interface Task {
   createdAt: string;
   completedAt?: string;
 }
+
