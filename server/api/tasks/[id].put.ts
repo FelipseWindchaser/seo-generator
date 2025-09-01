@@ -1,19 +1,19 @@
 // /server/api/tasks/[id].put.ts
 
 import { updateTask } from '~/server/utils/redis';
-import type { GenerationResult, Task } from '~/types';
+import type { Task } from '~/types';
 import { z } from 'zod';
 
-// --- ДЕТАЛЬНЫЕ СХЕМЫ, ПОЛНОСТЬЮ СИНХРОНИЗИРОВАННЫЕ С TYPES.TS ---
+// --- АКТУАЛЬНЫЕ СХЕМЫ, СИНХРОНИЗИРОВАННЫЕ С TYPES.TS ---
 
-// Схема для типа KeywordDetail
-const keywordDetailSchema = z.object({
-  keyword: z.string(),
-  count: z.number(),
-  example: z.string(),
+// Схема для AnalysisDetail
+const analysisDetailSchema = z.object({
+  point: z.string(),
+  isCovered: z.boolean(),
+  evidence: z.string(),
 });
 
-// Схема для типа ValidationMetrics (теперь включает все новые поля)
+// Схема для ValidationMetrics
 const validationMetricsSchema = z.object({
   charCount: z.number(),
   charCountNoSpaces: z.number(),
@@ -35,30 +35,32 @@ const validationMetricsSchema = z.object({
     end: z.number(),
   }),
   charDensity: z.number(),
-});
-
-// Схема для объекта metrics внутри GenerationResult
-const generationMetricsSchema = validationMetricsSchema.extend({
-  keywordDetails: z.array(keywordDetailSchema),
+  // Добавляем поле, которое теперь является частью метрик
   boldKeywordsCount: z.number(),
-  utpCovered: z.number().optional(),
-  painPointsAddressed: z.number().optional(),
-  trustTriggers: z.number().optional(),
 });
 
-// --- ФИНАЛЬНАЯ СХЕМА ДЛЯ GenerationResult ---
+// Схема для одной вариации текста (TextVariation)
+const textVariationSchema = z.object({
+  description: z.string(),
+  metrics: validationMetricsSchema,
+  analysis: z.object({
+    utpAnalysis: z.array(analysisDetailSchema),
+    painPointAnalysis: z.array(analysisDetailSchema),
+  }),
+});
+
+// Финальная схема для GenerationResult
 const generationResultSchema = z.object({
   success: z.boolean(),
-  content: z.string(),
   title: z.string(),
-  description: z.string(),
-  metrics: generationMetricsSchema.optional(),
+  variations: z.array(textVariationSchema), // Валидируем массив вариаций
   attempts: z.number(),
   warnings: z.array(z.string()).optional(),
   processingLog: z.object({
       added: z.array(z.string()),
       removed: z.array(z.string()),
   }).optional(),
+  // УДАЛЕНО: content, metrics, analysis - они теперь внутри variations
 });
 
 // Схема для валидации всего тела запроса
@@ -69,16 +71,18 @@ const updateBodySchema = z.object({
 
 export default defineEventHandler(async (event) => {
   const taskId = getRouterParam(event, 'id');
-  const body = await readBody(event);
-
+  
   if (!taskId) {
     throw createError({ statusCode: 400, message: 'Task ID is required' });
   }
 
+  const body = await readBody(event);
+
   // 1. Валидируем тело запроса по новой, полной схеме
   const validation = updateBodySchema.safeParse(body);
   if (!validation.success) {
-    console.error('[Task Update] Validation Error:', validation.error.errors);
+    // Логируем ошибку для отладки на сервере
+    console.error('[Task Update] Zod Validation Error:', validation.error.errors);
     throw createError({ statusCode: 400, message: 'Invalid request body', data: validation.error.errors });
   }
   
@@ -91,7 +95,7 @@ export default defineEventHandler(async (event) => {
     completedAt: new Date().toISOString(),
   };
 
-  // 3. Вызываем вашу функцию updateTask
+  // 3. Вызываем функцию updateTask для сохранения в Redis
   try {
     await updateTask(taskId, updates);
     return { success: true, message: 'Task updated successfully' };

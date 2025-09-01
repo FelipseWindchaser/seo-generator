@@ -3,11 +3,12 @@
 import { z } from 'zod';
 import { defineEventHandler, readBody, createError } from 'h3';
 import { ContentValidator } from '~/server/utils/content-validator';
-import { prepareFinalResult } from '~/composables/processGeneration';
-import type { GenerationResult } from '~/types';
-import { ModelProvider } from '../services/langchain.service';
+import { getModel, ModelProvider } from '~/server/services/langchain.service';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
+import type { GenerationRequest, TextVariation, AnalysisDetail } from '~/types';
 
-// Схема, описывающая `generationRequest`, как она приходит с клиента
+// --- Zod-схемы для валидации ---
+
 const generationRequestFromClientSchema = z.object({
   productName: z.string().min(1),
   productUrl: z.string().url().optional(),
@@ -18,53 +19,105 @@ const generationRequestFromClientSchema = z.object({
   adsPlanned: z.boolean(),
   canChangeVisuals: z.boolean(),
   modelProvider: z.nativeEnum(ModelProvider).optional(),
+  numberOfVariations: z.number().min(1).max(5).optional(),
 });
 
-// Схема для тела запроса на перепроверку
 const revalidateRequestSchema = z.object({
   text: z.string(),
   generationRequest: generationRequestFromClientSchema,
 });
 
+// --- Переиспользуемый класс для анализа контента ---
+
+const analysisSchema = z.object({
+  utpAnalysis: z.array(z.object({
+    point: z.string(),
+    isCovered: z.boolean(),
+    evidence: z.string(),
+  })),
+  painPointAnalysis: z.array(z.object({
+    point: z.string(),
+    isCovered: z.boolean(),
+    evidence: z.string(),
+  })),
+});
+type AnalysisResponseType = z.infer<typeof analysisSchema>;
+
+class ContentAnalyzer {
+  async analyze(text: string, request: GenerationRequest): Promise<{ utpAnalysis: AnalysisDetail[], painPointAnalysis: AnalysisDetail[] }> {
+    const model = getModel(request.modelProvider || ModelProvider.GEMINI, { temperature: 0.0 });
+    const prompt = ChatPromptTemplate.fromTemplate(`
+      Ты — умный и внимательный ассистент-аналитик. Твоя задача — найти семантическое подтверждение для каждого тезиса в предоставленном тексте. Ты должен понимать смысл, а не просто искать точные совпадения слов.
+      --- ТЕКСТ ДЛЯ АНАЛИЗА ---
+      {text}
+      --- СПИСОК УТП ---
+      {usp}
+      --- СПИСОК БОЛЕЙ ---
+      {reviews}
+      --- ЗАДАЧА И ПРАВИЛА ---
+      Для КАЖДОГО пункта из УТП и БОЛЕЙ найди в тексте наиболее релевантное предложение, которое подтверждает этот тезис, и вынеси вердикт.
+      - isCovered: true, если СМЫСЛ тезиса передан в тексте, даже если использованы другие слова (синонимы, перефразирование).
+      - isCovered: false, если тезис в тексте не упоминается.
+      - evidence: Если isCovered: true, приведи ТОЧНУЮ цитату (одно полное предложение) из текста, которое лучше всего доказывает раскрытие тезиса. Если false, оставь пустую строку.
+      --- ПРИМЕРЫ ПРАВИЛЬНОГО АНАЛИЗА ---
+      Пример 1:
+      - Тезис: "Гарантия 3 года"
+      - Предложение в тексте: "Мы настолько уверены в качестве нашей соковыжималки, что предоставляем на нее трехлетнюю гарантию."
+      - Твой вывод: {{ "point": "Гарантия 3 года", "isCovered": true, "evidence": "Мы настолько уверены в качестве нашей соковыжималки, что предоставляем на нее трехлетнюю гарантию." }}
+      Пример 2:
+      - Тезис: "Очень шумная"
+      - Предложение в тексте: "Благодаря инверторному мотору нового поколения, устройство работает практически бесшумно, позволяя готовить сок даже ранним утром."
+      - Твой вывод: {{ "point": "Очень шумная", "isCovered": true, "evidence": "Благодаря инверторному мотору нового поколения, устройство работает практически бесшумно, позволяя готовить сок даже ранним утром." }}
+      Пример 3:
+      - Тезис: "Подходит для твердых овощей"
+      - Предложение в тексте: "Наш прибор отлично справляется с яблоками и апельсинами."
+      - Твой вывод: {{ "point": "Подходит для твердых овощей", "isCovered": false, "evidence": "" }} (потому что яблоки и апельсины - это фрукты, а не твердые овощи, как морковь или свекла).
+      КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON, соответствующем схеме.
+    `);
+    const chain = prompt.pipe(model.withStructuredOutput(analysisSchema));
+    const response = await chain.invoke({
+      text: text,
+      usp: JSON.stringify(request.usp),
+      reviews: request.reviews,
+    }) as AnalysisResponseType;
+    return response;
+  }
+}
+
+// --- Основной обработчик ---
+
 const validator = new ContentValidator();
+const contentAnalyzer = new ContentAnalyzer();
 
 export default defineEventHandler(async (event) => {
   try {
     const body = await readBody(event);
     const { text, generationRequest } = revalidateRequestSchema.parse(body);
 
-    // 1. Валидируем отредактированный текст
-    const validationResult = await validator.validate(
-      text, 
-      generationRequest.requiredKeywords,
-      generationRequest.optionalKeywords
-    );
+    const [validationResult, analysisResult] = await Promise.all([
+      validator.validate(
+        text, 
+        generationRequest.requiredKeywords,
+        generationRequest.optionalKeywords
+      ),
+      contentAnalyzer.analyze(text, generationRequest)
+    ]);
 
-    // 2. ИСПРАВЛЕНИЕ: Корректно считаем `boldKeywordsCount`
-    // Это простое вычисление количества пар "**" в тексте.
-    const boldCount = (text.match(/\*\*/g) || []).length / 2;
-    const additionalChecks = {
-      issues: [],
-      checks: {
-        boldKeywords: boldCount,
-        // Остальные поля здесь нерелевантны, поэтому ставим 0
-        utpCovered: 0,
-        painPointsAddressed: 0,
-        trustTriggers: 0,
+    // ИСПРАВЛЕНО: Собираем финальный объект типа TextVariation, который ожидает фронтенд
+    const updatedVariation: TextVariation = {
+      description: text,
+      metrics: {
+        ...validationResult.metrics, // Берем все метрики из валидатора
+        // И добавляем недостающее поле, посчитав его здесь
+        boldKeywordsCount: (text.match(/\*\*/g) || []).length / 2,
+      },
+      analysis: {
+        utpAnalysis: analysisResult.utpAnalysis,
+        painPointAnalysis: analysisResult.painPointAnalysis,
       },
     };
 
-    // 3. Собираем финальный результат с помощью хелпера
-    const finalResult: GenerationResult = prepareFinalResult(
-      generationRequest.productName,
-      text,
-      validationResult,
-      additionalChecks, // Передаем объект с корректным `boldKeywordsCount`
-      0, // `attempts` не имеет значения для перепроверки
-      validationResult.isValid
-    );
-
-    return finalResult;
+    return updatedVariation;
 
   } catch (error: any) {
     console.error(`[API /revalidate] Error:`, error);

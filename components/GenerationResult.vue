@@ -36,15 +36,15 @@
         </div>
       </transition>
 
-      <!-- ИСПРАВЛЕНО: Панель вариаций перенесена внутрь этого блока -->
+      <!-- Панель вариаций -->
       <div
-        v-if="result.descriptions && result.descriptions.length > 1"
+        v-if="result.variations && result.variations.length > 1"
         class="bg-white border border-slate-200 rounded-lg p-4"
       >
         <div class="flex items-center gap-2 flex-wrap">
           <span class="text-sm font-medium text-slate-600 mr-2">Вариации:</span>
           <button
-            v-for="(desc, index) in result.descriptions"
+            v-for="(variation, index) in result.variations"
             :key="index"
             @click="currentVariationIndex = index"
             class="px-3 py-1 text-sm font-semibold rounded-full transition-colors"
@@ -61,7 +61,7 @@
 
       <!-- БЛОК 1: МЕТРИКИ ВАЛИДАТОРА -->
       <div
-        v-if="result.metrics"
+        v-if="activeVariation.metrics"
         class="bg-slate-50 border border-slate-200 rounded-lg p-6 transition-colors"
         :class="{ 'flash-success': metricsJustUpdated }"
       >
@@ -72,13 +72,13 @@
           <div class="flex justify-between">
             <span class="text-slate-600">Символов:</span>
             <span class="font-medium text-slate-900">{{
-              result.metrics.charCount
+              activeVariation.metrics.charCount
             }}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-slate-600">Плотность (обязательные ключи):</span>
             <span class="font-medium text-slate-900"
-              >{{ result.metrics.keywordDensity?.toFixed(2) }}%</span
+              >{{ activeVariation.metrics.keywordDensity?.toFixed(2) }}%</span
             >
           </div>
         </div>
@@ -101,7 +101,7 @@
 
       <!-- БЛОК: АНАЛИЗ СОДЕРЖАНИЯ -->
       <div
-        v-if="result.analysis"
+        v-if="activeVariation.analysis"
         class="bg-slate-50 border border-slate-200 rounded-lg p-6"
       >
         <h3 class="text-lg font-semibold text-slate-800 mb-4">
@@ -113,7 +113,7 @@
             <h4 class="font-semibold text-slate-700 mb-3">Раскрытие УТП</h4>
             <ul class="space-y-4">
               <li
-                v-for="(item, index) in result.analysis.utpAnalysis"
+                v-for="(item, index) in activeVariation.analysis.utpAnalysis"
                 :key="`utp-${index}`"
               >
                 <div class="flex items-start">
@@ -142,7 +142,8 @@
             </h4>
             <ul class="space-y-4">
               <li
-                v-for="(item, index) in result.analysis.painPointAnalysis"
+                v-for="(item, index) in activeVariation.analysis
+                  .painPointAnalysis"
                 :key="`pain-${index}`"
               >
                 <div class="flex items-start">
@@ -305,7 +306,7 @@
 
       <!-- БЛОК 5: РАСШИФРОВКА КЛЮЧЕВЫХ СЛОВ -->
       <div
-        v-if="result.metrics"
+        v-if="activeVariation.metrics"
         class="bg-slate-50 border border-slate-200 rounded-lg p-6"
       >
         <h3 class="text-lg font-semibold text-slate-800 mb-4">
@@ -316,8 +317,8 @@
             <div class="flex justify-between items-baseline text-sm mb-2">
               <h4 class="font-semibold text-slate-800">Обязательные</h4>
               <span class="font-medium text-slate-600">
-                {{ result.metrics.requiredKeywordsUsed }} /
-                {{ result.metrics.requiredKeywordsTotal }}
+                {{ activeVariation.metrics.requiredKeywordsUsed }} /
+                {{ activeVariation.metrics.requiredKeywordsTotal }}
               </span>
             </div>
             <div class="border border-slate-200 rounded-md bg-white">
@@ -351,8 +352,8 @@
             <div class="flex justify-between items-baseline text-sm mb-2">
               <h4 class="font-semibold text-slate-800">Необязательные</h4>
               <span class="font-medium text-slate-600">
-                {{ result.metrics.optionalKeywordsUsed }} /
-                {{ result.metrics.optionalKeywordsTotal }}
+                {{ activeVariation.metrics.optionalKeywordsUsed }} /
+                {{ activeVariation.metrics.optionalKeywordsTotal }}
               </span>
             </div>
             <div class="border border-slate-200 rounded-md bg-white">
@@ -386,7 +387,11 @@
 
 <script setup lang="ts">
 import { useDebounceFn } from "@vueuse/core";
-import type { GenerationResult, GenerationRequest } from "~/types";
+import type {
+  GenerationResult,
+  GenerationRequest,
+  TextVariation,
+} from "~/types";
 
 const props = defineProps<{
   taskId: string;
@@ -417,16 +422,27 @@ const showGenerationSuccessBanner = ref(false);
 const originalContentBeforeEdit = ref("");
 const currentVariationIndex = ref(0);
 
+// --- ЦЕНТРАЛИЗОВАННЫЙ ДОСТУП К ДАННЫМ АКТИВНОЙ ВАРИАЦИИ ---
+const activeVariation = computed<TextVariation>(() => {
+  if (result.value && result.value.variations[currentVariationIndex.value]) {
+    return result.value.variations[currentVariationIndex.value];
+  }
+  // Возвращаем "пустую" структуру, чтобы избежать ошибок в шаблоне до загрузки данных
+  return {
+    description: "",
+    metrics: {} as any,
+    analysis: { utpAnalysis: [], painPointAnalysis: [] },
+  };
+});
+
 const editableContent = computed({
   get() {
-    if (result.value?.descriptions) {
-      return result.value.descriptions[currentVariationIndex.value] || "";
-    }
-    return "";
+    return activeVariation.value.description;
   },
   set(newValue) {
-    if (result.value?.descriptions) {
-      result.value.descriptions[currentVariationIndex.value] = newValue;
+    if (result.value?.variations) {
+      result.value.variations[currentVariationIndex.value].description =
+        newValue;
     }
   },
 });
@@ -450,7 +466,7 @@ const revalidateContent = useDebounceFn(async () => {
   if (!editableContent.value || !originalRequest.value) return;
 
   try {
-    const newMetricsResult = await $fetch<GenerationResult>("/api/revalidate", {
+    const updatedVariation = await $fetch<TextVariation>("/api/revalidate", {
       method: "POST",
       body: {
         text: editableContent.value,
@@ -458,12 +474,11 @@ const revalidateContent = useDebounceFn(async () => {
       },
     });
 
-    if (result.value) {
-      result.value.metrics = newMetricsResult.metrics;
-      result.value.warnings = newMetricsResult.warnings;
-      if (newMetricsResult.analysis) {
-        result.value.analysis = newMetricsResult.analysis;
-      }
+    if (result.value?.variations) {
+      result.value.variations[currentVariationIndex.value].metrics =
+        updatedVariation.metrics;
+      result.value.variations[currentVariationIndex.value].analysis =
+        updatedVariation.analysis;
 
       metricsJustUpdated.value = true;
       setTimeout(() => {
@@ -523,16 +538,18 @@ const checkStatus = async () => {
       status.value = "completed";
       result.value = response.result || null;
 
-      // ИСПРАВЛЕНО: Проверяем наличие и непустоту массива descriptions
+      // ИСПРАВЛЕНО: Защита от пустого массива variations
       if (
         result.value &&
-        result.value.descriptions &&
-        result.value.descriptions.length > 0
+        (!result.value.variations || result.value.variations.length === 0)
       ) {
-        // editableContent будет автоматически обновлен через computed property
-      } else if (result.value) {
-        // Обработка случая, если descriptions пуст или отсутствует
-        result.value.descriptions = [result.value.content || ""];
+        result.value.variations = [
+          {
+            description: "",
+            metrics: {} as any,
+            analysis: { utpAnalysis: [], painPointAnalysis: [] },
+          },
+        ];
       }
 
       if (!result.value) {
@@ -542,7 +559,7 @@ const checkStatus = async () => {
     } else if (response.status === "error") {
       status.value = "error";
       error.value =
-        response.result?.content ||
+        response.result?.variations?.[0]?.description ||
         "Произошла неизвестная ошибка в процессе генерации.";
     }
   } catch (err: any) {
@@ -584,22 +601,32 @@ const handleRetry = () => {
 };
 
 const requiredKeywordsList = computed(() => {
-  if (!originalRequest.value || !result.value?.metrics?.keywordUsageDetails) {
+  if (
+    !originalRequest.value ||
+    !activeVariation.value.metrics?.keywordUsageDetails
+  ) {
     return [];
   }
   return originalRequest.value.requiredKeywords.map((keywordName) => ({
     name: keywordName,
-    count: result.value?.metrics?.keywordUsageDetails[keywordName]?.count || 0,
+    count:
+      activeVariation.value.metrics.keywordUsageDetails[keywordName]?.count ||
+      0,
   }));
 });
 
 const optionalKeywordsList = computed(() => {
-  if (!originalRequest.value || !result.value?.metrics?.keywordUsageDetails) {
+  if (
+    !originalRequest.value ||
+    !activeVariation.value.metrics?.keywordUsageDetails
+  ) {
     return [];
   }
   return originalRequest.value.optionalKeywords.map((keywordName) => ({
     name: keywordName,
-    count: result.value?.metrics?.keywordUsageDetails[keywordName]?.count || 0,
+    count:
+      activeVariation.value.metrics.keywordUsageDetails[keywordName]?.count ||
+      0,
   }));
 });
 
@@ -628,9 +655,7 @@ const handleRefinement = async () => {
       method: "POST",
       body: payload,
     });
-    // ИСПРАВЛЕНО: Обновляем весь объект result, чтобы получить новый массив descriptions
     result.value = newResult;
-    // Сбрасываем индекс на первую (и единственную) новую вариацию
     currentVariationIndex.value = 0;
     refinementPrompt.value = "";
   } catch (err: any) {
@@ -681,9 +706,9 @@ const formattedContent = computed(() => {
 });
 
 const plainTextContent = computed(() => {
-  if (!result.value) return "";
+  if (!editableContent.value) return "";
   const cleanDescription = editableContent.value.replace(/\*\*/g, "");
-  return `${result.value.title}\n\n${cleanDescription}`;
+  return `${result.value?.title}\n\n${cleanDescription}`;
 });
 
 const copyToClipboard = async () => {

@@ -109,32 +109,44 @@ export interface KeywordDetail {
   example: string;
 }
 
-/**
- * @description Финальный объект результата, который сохраняется в БД и отдается клиенту.
- * Структура metrics здесь соответствует ValidationMetrics.
- */
+export interface TextVariation {
+  description: string;
+  // ИСПРАВЛЕНО: Тип metrics теперь является полным, как и ожидалось
+  metrics: ValidationMetrics & {
+    boldKeywordsCount: number;
+    // Мы можем добавить и keywordDetails для полной консистентности,
+    // хотя revalidate его не генерирует, но это сделает тип надежнее.
+    keywordDetails?: KeywordDetail[]; 
+  };
+  analysis: {
+    utpAnalysis: AnalysisDetail[];
+    painPointAnalysis: AnalysisDetail[];
+  };
+}
+
 export interface GenerationResult {
   success: boolean;
-  content: string;
+  // content: string;
   title: string;
-  descriptions: string[];
-  metrics?: ValidationMetrics & { 
-    keywordDetails: KeywordDetail[];
-    boldKeywordsCount: number;
-    utpCovered?: number;
-    painPointsAddressed?: number;
-    trustTriggers?: number;
-  };
+  // descriptions: string[];
+  variations: TextVariation[];
+  // metrics?: ValidationMetrics & { 
+  //   keywordDetails: KeywordDetail[];
+  //   boldKeywordsCount: number;
+  //   utpCovered?: number;
+  //   painPointsAddressed?: number;
+  //   trustTriggers?: number;
+  // };
   attempts: number;
   warnings?: string[];
   processingLog?: {
     added: string[];
     removed: string[];
   };
-  analysis?: {
-    utpAnalysis: AnalysisDetail[];
-    painPointAnalysis: AnalysisDetail[];
-  };
+  // analysis?: {
+  //   utpAnalysis: AnalysisDetail[];
+  //   painPointAnalysis: AnalysisDetail[];
+  // };
 }
 
 export interface AnalysisDetail {

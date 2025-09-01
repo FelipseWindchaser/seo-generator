@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { defineEventHandler, readValidatedBody, createError } from 'h3';
 // ИМПОРТИРУЕМ НАШУ НОВУЮ ЦЕПОЧКУ
 import { keywordGeneratorChain, ModelProvider } from '~/server/services/langchain.service';
-import { handleGoogleAIError } from "~/server/utils/error-handler";
+import { handleGoogleAIError } from "~/server/utils/_error-handler";
 
 // Схема валидации для входящего запроса (остается без изменений)
 const requestSchema = z.object({

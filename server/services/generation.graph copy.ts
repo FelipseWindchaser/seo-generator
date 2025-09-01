@@ -4,17 +4,20 @@ import { StateGraph, END } from "@langchain/langgraph";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { z } from "zod";
-import type { GenerationRequest, AnalysisDetail, TextVariation } from "~/types";
+import type { GenerationRequest, AnalysisDetail } from "~/types";
 import { getModel, ModelProvider } from "./langchain.service";
 import { ContentValidator, StructuredValidationResult } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
 
 const validator = new ContentValidator();
-const MAX_ATTEMPTS = 8;
+const MAX_ATTEMPTS = 8; // Увеличиваем лимит, так как добавились новые шаги
 const MAX_CONTENT_LENGTH = 2000;
 
 // --- 1. РАСШИРЕНИЕ СОСТОЯНИЯ ГРАФА ---
 
+/**
+ * @description Структура для хранения результатов анализа контента.
+ */
 interface ContentAnalysisResult {
   utpAnalysis: AnalysisDetail[];
   painPointAnalysis: AnalysisDetail[];
@@ -23,33 +26,42 @@ interface ContentAnalysisResult {
   isFullyCovered: boolean;
 }
 
+/**
+ * @description Обновленное состояние графа, включающее результаты анализа.
+ */
 interface AgentState {
   generationRequest: GenerationRequest;
   generatedContent: string;
   validationResult: StructuredValidationResult | null;
   analysisResult: ContentAnalysisResult | null;
-  textVariations: TextVariation[] | null;
+  textVariations: string[] | null; // <-- НОВОЕ ПОЛЕ
   attempts: number;
   title: string;
 }
 
 // --- 2. ОПРЕДЕЛЕНИЕ УЗЛОВ-СПЕЦИАЛИСТОВ ---
 
+// Узлы generateNode, truncateNode, extendNode, fixKeysNode, validateNode остаются без изменений.
+// ... (код этих узлов)
 const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Initial generation with streaming...`);
   const { generationRequest } = state;
+  
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { 
     temperature: 0.7,
     maxOutputTokens: 530 
   });
+  
   const prompt = ChatPromptTemplate.fromTemplate(`
     Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст-описание для товара, размещаемого на маркетплейсе Wildberries.
+    
     --- ДАННЫЕ ---
     - Название товара: {productName}
     - УТП (раскрой через выгоды для клиента): {usp}
     - Отзывы конкурентов (преврати проблемы в преимущества): {reviews}
     - Обязательные ключи: {requiredKeywords}
     - Необязательные ключи: {optionalKeywords}
+    
     --- ПРАВИЛА ---
     1. Объём: Постарайся сгенерировать текст объемом 1800–2000 символов.
     2. Ключи: Используй все обязательные ключи и как можно больше необязательных.
@@ -61,6 +73,7 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
        - 4-ый абзац: кому подойдёт и как упростит жизнь. В этом абзаце, если все еще остались неиспользованные ключи, добавь их в первое предложение.
     ВЫЖНО: Абзацы должны быть КОРОТКИМИ, легкочитаемыми и связанными между собой логически.
     5. Запрет: без списков, подзаголовков, маркировок — только цельный текст.
+    
     Верни ответ в формате:
     ===ЗАГОЛОВОК===
     [заголовок]
@@ -75,6 +88,7 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
       requiredKeywords: JSON.stringify(generationRequest.requiredKeywords),
       optionalKeywords: JSON.stringify(generationRequest.optionalKeywords),
   });
+
   let responseText = "";
   for await (const chunk of stream) {
     responseText += chunk;
@@ -83,10 +97,12 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
       break; 
     }
   }
+
   const titleMatch = responseText.match(/===ЗАГОЛОВОК===\s*([\s\S]*?)\s*===ОПИСАНИЕ===/);
   const descriptionMatch = responseText.match(/===ОПИСАНИЕ===\s*([\s\S]*)/);
   const title = titleMatch ? titleMatch[1].trim() : generationRequest.productName;
   const content = descriptionMatch ? descriptionMatch[1].trim() : responseText;
+  
   console.log(`[generateNode] Raw content generated. Length: ${content.length}`);
   return { generatedContent: content, title: title, attempts: 1 };
 };
@@ -105,17 +121,21 @@ const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 580 });
   const prompt = ChatPromptTemplate.fromTemplate(`
     Ты — креативный копирайтер. Твоя задача — органично расширить текст, чтобы его объем попал в диапазон 1800–2000 символов.
+    
     --- ИСХОДНЫЙ ТЕКСТ ---
     {text}
+    
     --- КОНТЕКСТ ---
     - Текущая длина: {currentLength} символов.
     - Целевая длина: 1800-2000 символов.
     - УТП, которые можно раскрыть подробнее: {usp}
     - Проблемы из отзывов, которые можно обыграть как преимущества: {reviews}
+    
     --- ЗАДАЧА ---
     1.  Проанализируй исходный текст и данные.
     2.  Добавь **один** новый, логически связанный абзац (2-4 предложения), раскрывающий одно из УТП или преимуществ.
     3.  **КРИТИЧЕСКИ ВАЖНО:** В новом абзаце старайся **не использовать** обязательные ключевые слова, чтобы не увеличивать их плотность.
+    
     Верни ТОЛЬКО полный текст с новым абзацем. Без комментариев.
       `);
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
@@ -124,7 +144,7 @@ const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
     currentLength: generatedContent.length,
     usp: generationRequest.usp.join(', '),
     reviews: generationRequest.reviews,
-  });
+});
   const newContent = `${generatedContent}\n\n${newParagraph}`;
   return { generatedContent: newContent, attempts: state.attempts + 1 };
 };
@@ -135,23 +155,27 @@ const fixKeysNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.2 });
   const prompt = ChatPromptTemplate.fromTemplate(`
     Ты — редактор-хирург. Твоя задача — взять текст и список недостающих ключевых слов, а затем вернуть ПОЛНЫЙ текст, в который эти слова аккуратно интегрированы.
+    
     --- ИСХОДНЫЙ ТЕКСТ ---
     {text}
+    
     --- НЕДОСТАЮЩИЕ КЛЮЧИ (вставь каждый по одному разу) ---
     {missingKeywords}
+    
     --- ЗАДАЧА ---
     Аккуратно интегрируй "НЕДОСТАЮЩИЕ КЛЮЧИ" в "ИСХОДНЫЙ ТЕКСТ".
     - Найди наиболее логичные места для вставки в первых двух-трех абзацах. Не вставляй ключи в последний абзац.
     - Слегка перепиши те предложения, куда планируешь вставить ключи, чтобы они выглядели органично.
     - **КРИТИЧЕСКИ ВАЖНО:** Не добавляй новые абзацы и не удаляй важную информацию. Твоя цель — минимальные, точечные изменения.
+    
     Верни ПОЛНЫЙ И ИСПРАВЛЕННЫЙ ТЕКСТ. Не пиши ничего, кроме самого текста.
       `);
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
   const content = await chain.invoke({ 
     text: generatedContent, 
     missingKeywords: JSON.stringify(validationResult?.metrics.missingKeywords || []),
-  });
-  return { generatedContent: content, attempts: state.attempts + 1 };
+});
+return { generatedContent: content, attempts: state.attempts + 1 };
 };
 
 const validateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
@@ -161,222 +185,238 @@ const validateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
   return { validationResult: result };
 };
 
+
+// --- НОВЫЕ УЗЛЫ ДЛЯ АНАЛИЗА И КОРРЕКЦИИ КОНТЕНТА ---
+
+/**
+ * @description Zod-схема для парсинга ответа от LLM-анализатора.
+ */
 const analysisSchema = z.object({
   utpAnalysis: z.array(z.object({
-    point: z.string(),
-    isCovered: z.boolean(),
-    evidence: z.string(),
+    point: z.string().describe("Исходный текст УТП"),
+    isCovered: z.boolean().describe("Раскрыто ли УТП в тексте"),
+    evidence: z.string().describe("Цитата из текста, доказывающая раскрытие, или пустая строка"),
   })),
   painPointAnalysis: z.array(z.object({
-    point: z.string(),
-    isCovered: z.boolean(),
-    evidence: z.string(),
+    point: z.string().describe("Исходная 'боль' из отзыва"),
+    isCovered: z.boolean().describe("Отработана ли 'боль' в тексте"),
+    evidence: z.string().describe("Цитата из текста, доказывающая отработку, или пустая строка"),
   })),
 });
+
+// ИЗМЕНЕНО: Создаем тип TypeScript из Zod-схемы
 type AnalysisResponseType = z.infer<typeof analysisSchema>;
 
-class ContentAnalyzer {
-  async analyze(text: string, request: GenerationRequest): Promise<AnalysisResponseType> {
-    const model = getModel(request.modelProvider || ModelProvider.GEMINI, { temperature: 0.0 });
-    const prompt = ChatPromptTemplate.fromTemplate(`
-      Ты — умный и внимательный ассистент-аналитик. Твоя задача — найти семантическое подтверждение для каждого тезиса в предоставленном тексте. Ты должен понимать смысл, а не просто искать точные совпадения слов.
-      --- ТЕКСТ ДЛЯ АНАЛИЗА ---
-      {text}
-      --- СПИСОК УТП (Уникальные Торговые Преимущества) ---
-      {usp}
-      --- СПИСОК БОЛЕЙ (Проблемы из отзывов, которые нужно отработать) ---
-      {reviews}
-      --- ЗАДАЧА И ПРАВИЛА ---
-      Для КАЖДОГО пункта из УТП и БОЛЕЙ найди в тексте наиболее релевантное предложение, которое подтверждает этот тезис, и вынеси вердикт.
-      - isCovered: true, если СМЫСЛ тезиса передан в тексте, даже если использованы другие слова (синонимы, перефразирование).
-      - isCovered: false, если тезис в тексте не упоминается.
-      - evidence: Если isCovered: true, приведи ТОЧНУЮ цитату (одно полное предложение) из текста, которое лучше всего доказывает раскрытие тезиса. Если false, оставь пустую строку.
-      --- ПРИМЕРЫ ПРАВИЛЬНОГО АНАЛИЗА ---
-      Пример 1:
-      - Тезис: "Гарантия 3 года"
-      - Предложение в тексте: "Мы настолько уверены в качестве нашей соковыжималки, что предоставляем на нее трехлетнюю гарантию."
-      - Твой вывод: {{ "point": "Гарантия 3 года", "isCovered": true, "evidence": "Мы настолько уверены в качестве нашей соковыжималки, что предоставляем на нее трехлетнюю гарантию." }}
-      Пример 2:
-      - Тезис: "Очень шумная"
-      - Предложение в тексте: "Благодаря инверторному мотору нового поколения, устройство работает практически бесшумно, позволяя готовить сок даже ранним утром."
-      - Твой вывод: {{ "point": "Очень шумная", "isCovered": true, "evidence": "Благодаря инверторному мотору нового поколения, устройство работает практически бесшумно, позволяя готовить сок даже ранним утром." }}
-      Пример 3:
-      - Тезис: "Подходит для твердых овощей"
-      - Предложение в тексте: "Наш прибор отлично справляется с яблоками и апельсинами."
-      - Твой вывод: {{ "point": "Подходит для твердых овощей", "isCovered": false, "evidence": "" }} (потому что яблоки и апельсины - это фрукты, а не твердые овощи, как морковь или свекла).
-      КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON, соответствующем схеме.
-    `);
-    const chain = prompt.pipe(model.withStructuredOutput(analysisSchema));
-    const response = await chain.invoke({
-      text: text,
-      usp: JSON.stringify(request.usp),
-      reviews: request.reviews,
-    }) as AnalysisResponseType;
-    return response;
-  }
-}
-
+/**
+ * @description Узел-анализатор. Проверяет, раскрыты ли УТП и "боли" в тексте.
+ */
 const analyzeContentNode = async (state: AgentState): Promise<Partial<AgentState>> => {
-  console.log(`[Graph] Analyzing base content coverage...`);
-  const analyzer = new ContentAnalyzer();
-  const response = await analyzer.analyze(state.generatedContent, state.generationRequest);
-  const uncoveredUtps = response.utpAnalysis.filter(item => !item.isCovered).map(item => item.point);
-  const uncoveredPainPoints = response.painPointAnalysis.filter(item => !item.isCovered).map(item => item.point);
+  console.log(`[Graph] Analyzing content coverage...`);
+  const { generationRequest, generatedContent } = state;
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.0 });
+
+  const prompt = ChatPromptTemplate.fromTemplate(`
+    Ты — беспристрастный аналитик контента. Твоя задача — проверить, раскрывает ли предоставленный ТЕКСТ каждый пункт из списков УТП и БОЛЕЙ.
+
+    --- ТЕКСТ ДЛЯ АНАЛИЗА ---
+    {text}
+
+    --- СПИСОК УТП (Уникальные Торговые Преимущества) ---
+    {usp}
+
+    --- СПИСОК БОЛЕЙ (Проблемы из отзывов, которые нужно отработать) ---
+    {reviews}
+
+    --- ЗАДАЧА ---
+    Для КАЖДОГО пункта из УТП и БОЛЕЙ дай бинарный ответ (true/false) и найди одно предложение-доказательство в тексте.
+    - isCovered: true, если идея пункта ЯВНО и ОДНОЗНАЧНО раскрыта в тексте.
+    - isCovered: false, если идея не раскрыта, либо упомянута косвенно.
+    - evidence: Если isCovered: true, приведи точную цитату (одно предложение) из текста. Если false, оставь пустую строку.
+
+    КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON, соответствующем схеме.
+  `);
+
+  const chain = prompt.pipe(model.withStructuredOutput(analysisSchema));
+  const response = await chain.invoke({
+    text: generatedContent,
+    usp: JSON.stringify(generationRequest.usp),
+    reviews: generationRequest.reviews,
+  }) as AnalysisResponseType;
+
+  // ИЗМЕНЕНО: Явно типизируем `item`, чтобы TypeScript был спокоен
+  const uncoveredUtps = response.utpAnalysis
+    .filter((item: { isCovered: boolean }) => !item.isCovered)
+    .map((item: { point: string }) => item.point);
+    
+  const uncoveredPainPoints = response.painPointAnalysis
+    .filter((item: { isCovered: boolean }) => !item.isCovered)
+    .map((item: { point: string }) => item.point);
+
   const analysisResult: ContentAnalysisResult = {
     ...response,
     uncoveredUtps,
     uncoveredPainPoints,
     isFullyCovered: uncoveredUtps.length === 0 && uncoveredPainPoints.length === 0,
   };
+
   return { analysisResult, attempts: state.attempts + 1 };
 };
 
+/**
+ * @description Узел-корректор. Встраивает недостающие УТП и "боли" в текст.
+ */
 const fixContentNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Fixing content coverage...`);
   const { generationRequest, generatedContent, analysisResult } = state;
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.5 });
+
   const prompt = ChatPromptTemplate.fromTemplate(`
     Ты — талантливый редактор. Твоя задача — аккуратно доработать текст, чтобы он раскрывал недостающие маркетинговые тезисы.
+
     --- ИСХОДНЫЙ ТЕКСТ ---
     {text}
+
     --- НЕДОСТАЮЩИЕ ТЕЗИСЫ (нужно интегрировать в текст) ---
     - Нераскрытые УТП: {uncoveredUtps}
     - Неотработанные "боли": {uncoveredPainPoints}
+
     --- ПРАВИЛА РЕДАКТИРОВАНИЯ ---
     1.  **Интегрируй, а не добавляй:** Найди в тексте наиболее подходящие по смыслу места и перепиши существующие предложения, чтобы включить в них идеи из "недостающих тезисов".
     2.  **Не создавай новые абзацы.**
     3.  **Сохраняй объем:** Старайся не увеличивать общую длину текста. Если нужно что-то добавить, сократи другое, менее важное предложение.
     4.  **Не трогай SEO-ключи:** Постарайся сохранить все обязательные ключевые слова, которые уже есть в тексте.
+
     Верни ТОЛЬКО полный, исправленный текст. Без комментариев.
   `);
+
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
   const newContent = await chain.invoke({
     text: generatedContent,
     uncoveredUtps: JSON.stringify(analysisResult?.uncoveredUtps || []),
     uncoveredPainPoints: JSON.stringify(analysisResult?.uncoveredPainPoints || []),
   });
+
   return { generatedContent: newContent, attempts: state.attempts + 1 };
 };
+
+// --- НОВЫЙ УЗЕЛ-СПЕЦИАЛИСТ: ГЕНЕРАТОР ВАРИАЦИЙ ---
 
 const variationsSchema = z.object({
   variations: z.array(z.string()).describe("Массив с N стилистически разными версиями текста"),
 });
+
+// ИЗМЕНЕНО: Создаем TypeScript-тип из Zod-схемы
 type VariationsResponseType = z.infer<typeof variationsSchema>;
 
-async function generateVariationStrings(baseText: string, request: GenerationRequest): Promise<string[]> {
-    const numVariations = (request.numberOfVariations || 1) - 1;
-    if (numVariations < 1) return [];
-    const model = getModel(request.modelProvider || ModelProvider.GEMINI, { temperature: 0.6 });
-    const prompt = ChatPromptTemplate.fromTemplate(`
+const generateVariationsNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  const { generationRequest, generatedContent } = state;
+  const numVariations = generationRequest.numberOfVariations || 1;
+
+  if (numVariations <= 1) {
+    console.log('[Graph] Single variation requested. Skipping generation.');
+    return { textVariations: [generatedContent] };
+  }
+
+  console.log(`[Graph] Generating ${numVariations} text variations...`);
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.6 });
+
+  const prompt = ChatPromptTemplate.fromTemplate(`
     Ты — креативный редактор-копирайтер. Твоя задача — взять исходный SEO-текст и создать на его основе {numVariations} стилистически разных версий.
+
     --- ИСХОДНЫЙ ТЕКСТ (ОБРАЗЕЦ) ---
     {baseText}
+
     --- КОНТЕКСТ (для сохранения смысла) ---
     - Ключевые УТП: {usp}
     - Обязательные SEO-ключи: {requiredKeywords}
+
     --- ПРАВИЛА СОЗДАНИЯ ВАРИАЦИЙ ---
-    1.  **СОХРАНЯЙ СУТЬ:** Все вариации должны сохранять исходную структуру и раскрывать те же УТП.
+    1.  **СОХРАНЯЙ СУТЬ:** Все вариации должны сохранять исходную структуру (количество абзацев, основную мысль каждого абзаца) и раскрывать те же УТП.
     2.  **СОХРАНЯЙ SEO:** Все обязательные SEO-ключи ДОЛЖНЫ присутствовать в каждой вариации.
     3.  **СОХРАНЯЙ ОБЪЕМ:** Длина каждой вариации должна оставаться примерно такой же, как у исходного текста.
-    4.  **МЕНЯЙ СТИЛЬ:** Вариации должны отличаться за счет использования синонимов, изменения первых предложений, небольшого изменения тональности и перефразирования.
+    4.  **МЕНЯЙ СТИЛЬ:** Вариации должны отличаться друг от друга за счет:
+        - Использования синонимов и разных речевых оборотов.
+        - Изменения первых предложений (hooks) в абзацах.
+        - Небольшого изменения тональности (где-то более официально, где-то более дружелюбно).
+        - Перефразирования предложений.
+
     КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON с одним ключом "variations", который содержит массив из {numVariations} строк.
   `);
-    const chain = prompt.pipe(model.withStructuredOutput(variationsSchema));
-    const response = await chain.invoke({
-        baseText,
-        numVariations,
-        usp: request.usp.join(', '),
-        requiredKeywords: JSON.stringify(request.requiredKeywords),
-    }) as VariationsResponseType;
-    return response.variations;
-}
 
-const generateAndAnalyzeVariationsNode = async (state: AgentState): Promise<Partial<AgentState>> => {
-  const { generationRequest, generatedContent, analysisResult, validationResult } = state;
-  const numVariations = generationRequest.numberOfVariations || 1;
-  const contentAnalyzer = new ContentAnalyzer();
-  const baseVariation: TextVariation = {
-    description: generatedContent,
-    metrics: {
-      ...validationResult!.metrics,
-      boldKeywordsCount: (generatedContent.match(/\*\*/g) || []).length / 2,
-    },
-    analysis: {
-      utpAnalysis: analysisResult!.utpAnalysis,
-      painPointAnalysis: analysisResult!.painPointAnalysis,
-    },
-  };
-  if (numVariations <= 1) {
-    console.log('[Graph] Single variation requested. Finalizing.');
-    return { textVariations: [baseVariation] };
-  }
-  console.log(`[Graph] Generating and analyzing ${numVariations - 1} additional variations...`);
-  const additionalStrings = await generateVariationStrings(generatedContent, generationRequest);
-  const additionalVariations = await Promise.all(additionalStrings.map(async (text) => {
-    const [validation, analysis] = await Promise.all([
-      validator.validate(text, generationRequest.requiredKeywords, generationRequest.optionalKeywords),
-      contentAnalyzer.analyze(text, generationRequest)
-    ]);
-    return {
-      description: text,
-      metrics: {
-        ...validation.metrics,
-        boldKeywordsCount: (text.match(/\*\*/g) || []).length / 2,
-      },
-      analysis: {
-        utpAnalysis: analysis.utpAnalysis,
-        painPointAnalysis: analysis.painPointAnalysis,
-      },
-    };
-  }));
-  return { textVariations: [baseVariation, ...additionalVariations] };
+  const chain = prompt.pipe(model.withStructuredOutput(variationsSchema));
+  
+  // ИЗМЕНЕНО: Добавляем явное приведение типа
+  const response = await chain.invoke({
+    baseText: generatedContent,
+    numVariations,
+    usp: generationRequest.usp.join(', '),
+    requiredKeywords: JSON.stringify(generationRequest.requiredKeywords),
+  }) as VariationsResponseType;
+
+  // Добавляем исходный текст как первую, самую надежную вариацию
+  const allVariations = [generatedContent, ...response.variations];
+  // Убеждаемся, что вернули нужное количество
+  const finalVariations = allVariations.slice(0, numVariations);
+
+  return { textVariations: finalVariations };
 };
 
-// --- МАРШРУТИЗАТОРЫ ---
+
+// --- 3. ОБНОВЛЕННЫЙ МАРШРУТИЗАТОР ---
 
 const routeAfterValidation = (state: AgentState): "truncate" | "extend" | "fix_keys" | "analyze_content" | "__end__" => {
   const seoStatus = state.validationResult?.status;
   console.log(`[Router] SEO Status: ${seoStatus}, Attempts: ${state.attempts}`);
-  // ИСПРАВЛЕНО: Убираем проверку на MAX_ATTEMPTS отсюда
+
+  if (state.attempts >= MAX_ATTEMPTS) {
+    console.log('[Router] Max attempts reached. Ending.');
+    return "__end__";
+  }
+
+  // Сначала решаем все SEO-проблемы
   if (seoStatus === "MISSING_KEYS") return "fix_keys";
   if (seoStatus === "TOO_LONG") return "truncate";
   if (seoStatus === "TOO_SHORT") return "extend";
+
+  // Если с SEO все в порядке, переходим к анализу контента
   if (seoStatus === "OK" || seoStatus === "NON_CRITICAL_ERRORS") {
     return "analyze_content";
   }
-  // Если SEO-цикл зашел в тупик, но попытки не исчерпаны, все равно идем на анализ
-  if (state.attempts < MAX_ATTEMPTS) {
-      return "analyze_content";
-  }
+
+  // Если статус неизвестен, но попытки не исчерпаны - завершаем
   return "__end__";
 };
 
-const routeAfterAnalysis = (state: AgentState): "fix_content" | "generate_and_analyze_variations" | "__end__" => {
+/**
+ * @description Маршрутизатор после анализа контента.
+ */
+const routeAfterAnalysis = (state: AgentState): "fix_content" | "generate_variations" | "__end__" => {
   const isCovered = state.analysisResult?.isFullyCovered;
   console.log(`[Router] Content coverage: ${isCovered ? 'OK' : 'Needs fixing'}`);
-  // ИСПРАВЛЕНО: Проверка на MAX_ATTEMPTS теперь здесь
-  if (state.attempts >= MAX_ATTEMPTS) {
-      console.log('[Router] Max attempts reached. Skipping content fix, generating variations.');
-      return "generate_and_analyze_variations";
-  }
+
+  if (state.attempts >= MAX_ATTEMPTS) return "__end__";
+
   if (isCovered) {
-    return "generate_and_analyze_variations";
+    // Если все раскрыто, идем генерировать вариации
+    return "generate_variations";
   } else {
     return "fix_content";
   }
 };
 
-// --- СБОРКА ГРАФА ---
+
+
+// --- 4. ОБНОВЛЕННАЯ СБОРКА ГРАФА ---
 
 const generativeAgent = new StateGraph<AgentState>({
   channels: {
     generationRequest: { value: (x, y) => y ?? x },
     generatedContent: { value: (x, y) => y ?? x },
     validationResult: { value: (x, y) => y ?? x },
-    analysisResult: { value: (x, y) => y ?? x },
-    textVariations: { value: (x, y) => y ?? x },
+    analysisResult: { value: (x, y) => y ?? x }, // НОВОЕ ПОЛЕ
     attempts: { value: (x, y) => y ?? x, default: () => 0 },
     title: { value: (x, y) => y ?? x },
+    textVariations: { value: (x, y) => y ?? x }, // <-- НОВОЕ ПОЛЕ
   },
 })
   .addNode("generate", generateNode)
@@ -384,18 +424,21 @@ const generativeAgent = new StateGraph<AgentState>({
   .addNode("extend", extendNode)
   .addNode("fix_keys", fixKeysNode)
   .addNode("validate", validateNode)
-  .addNode("analyze_content", analyzeContentNode)
-  .addNode("fix_content", fixContentNode)
-  .addNode("generate_and_analyze_variations", generateAndAnalyzeVariationsNode)
-
+  .addNode("analyze_content", analyzeContentNode) // НОВЫЙ УЗЕЛ
+  .addNode("fix_content", fixContentNode)       // НОВЫЙ УЗЕЛ
+  .addNode("generate_variations", generateVariationsNode)
   .addEdge("__start__", "generate")
   .addEdge("generate", "truncate")
   .addEdge("extend", "truncate")
   .addEdge("fix_keys", "truncate")
   .addEdge("truncate", "validate")
+  
+  // После исправления контента мы снова идем на обрезку и валидацию,
+  // чтобы убедиться, что SEO не сломалось окончательно.
   .addEdge("fix_content", "truncate")
-  .addEdge("generate_and_analyze_variations", END)
+  .addEdge("generate_variations", END)
 
+  // Условные переходы
   .addConditionalEdges("validate", routeAfterValidation, {
     "fix_keys": "fix_keys",
     "truncate": "truncate",
@@ -404,8 +447,9 @@ const generativeAgent = new StateGraph<AgentState>({
     "__end__": END,
   })
   .addConditionalEdges("analyze_content", routeAfterAnalysis, {
-    "fix_content": "fix_content",
-    "generate_and_analyze_variations": "generate_and_analyze_variations",
+  "fix_content": "fix_content",
+    // ИЗМЕНЕНО: Вместо END, идем на генерацию вариаций
+    "generate_variations": "generate_variations", 
     "__end__": END,
   })
   .compile();

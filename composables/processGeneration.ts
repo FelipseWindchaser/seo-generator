@@ -7,58 +7,16 @@ import type {
   ValidationResult,
   KeywordDetail,
   AnalysisDetail,
+  TextVariation, // <-- Импортируем новый тип
 } from "~/types";
 import { ContentValidator } from "~/server/utils/content-validator";
-import { intelligentTruncate } from "~/server/utils/text-trimmer";
-import { handleGoogleAIError } from "~/server/utils/error-handler";
+import { handleGoogleAIError } from "~/server/utils/_error-handler";
 import { getQueuedTasks, updateTask } from "~/server/utils/redis";
 import { generativeAgent } from "~/server/services/generation.graph";
 import {
   refinementChain,
   ModelProvider,
 } from "~/server/services/langchain.service";
-import { concat } from "@langchain/core/utils/stream";
-import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
-
-// --- ИНИЦИАЛИЗАЦИЯ ---
-const validator = new ContentValidator();
-const MAX_CONTENT_LENGTH = 2000;
-
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-function escapeRegex(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-export function findKeywordExample(content: string, keyword: string): string {
-  const contentLower = content.toLowerCase();
-  const searchKeyword = keyword.split(" ")[0];
-  const pos = contentLower.indexOf(searchKeyword.toLowerCase());
-  if (pos === -1) return "Пример не найден";
-  const start = Math.max(0, pos - 30);
-  const end = Math.min(content.length, pos + keyword.length + 30);
-  let example = content.slice(start, end);
-  if (start > 0) example = "..." + example;
-  if (end < content.length) example = example + "...";
-  return example.replace(
-    new RegExp(escapeRegex(keyword), "ig"),
-    (match) => `<strong>${match}</strong>`
-  );
-}
-
-export function checkAdditionalRequirements(
-  content: string,
-  data: GenerationRequest
-): { issues: string[]; checks: any } {
-  return {
-    issues: [],
-    checks: {
-      boldKeywords: (content.match(/\*\*/g) || []).length / 2,
-      utpCovered: 0,
-      painPointsAddressed: 0,
-      trustTriggers: 0,
-    },
-  };
-}
 
 // --- ЛОГИКА ФОНОВОГО ПРОЦЕССА ---
 export const repeatFunction = () => {
@@ -73,11 +31,8 @@ export const repeatFunction = () => {
 };
 
 async function processNextTaskInQueue() {
-  // 1. Ищем ОДНУ задачу в очереди со статусом 'queued'
-  // getQueuedTasks должна возвращать задачи в порядке их создания
   const queuedTasks = await getQueuedTasks();
   if (queuedTasks.length === 0) {
-    // Очередь пуста, это нормальное состояние, выходим
     return;
   }
 
@@ -87,20 +42,16 @@ async function processNextTaskInQueue() {
   );
 
   try {
-    // 2. НЕМЕДЛЕННО БЛОКИРУЕМ ЗАДАЧУ, меняя ее статус на 'running'
-    // После этого другой воркер ее уже не увидит
     await updateTask(taskToProcess.id, { status: "processing" });
     console.log(
       `[ProcessTask] Task ${taskToProcess.id} locked. Starting generation...`
     );
 
-    // 3. Теперь, когда задача заблокирована, безопасно запускаем долгий процесс
     if (!taskToProcess.request) {
       throw new Error("Task request data is missing.");
     }
     const result = await runGenerationWithValidation(taskToProcess.request);
 
-    // 4. Сохраняем финальный результат и помечаем задачу как 'completed'
     await updateTask(taskToProcess.id, { status: "completed", result });
     console.log(
       `[ProcessTask] Task ${taskToProcess.id} completed successfully.`
@@ -115,16 +66,21 @@ async function processNextTaskInQueue() {
         ? handleGoogleAIError(error).statusMessage
         : error.message || "Неизвестная критическая ошибка.";
 
-    // 5. В случае ошибки, помечаем задачу как 'error', чтобы она не обрабатывалась снова
+    // ИСПРАВЛЕНО: Формируем корректный объект ошибки
+    const errorResult: GenerationResult = {
+        success: false,
+        title: "Ошибка генерации",
+        attempts: 1,
+        variations: [{
+            description: errorMessage,
+            metrics: {} as any, // Заполняем пустыми, но существующими объектами
+            analysis: { utpAnalysis: [], painPointAnalysis: [] }
+        }]
+    };
+
     await updateTask(taskToProcess.id, {
       status: "error",
-      result: {
-        content: errorMessage,
-        success: false,
-        attempts: 0,
-        title: "",
-        descriptions: [errorMessage],
-      },
+      result: errorResult,
     });
   }
 }
@@ -133,7 +89,7 @@ async function processNextTaskInQueue() {
 export async function runUserRefinement(
   originalContent: string,
   userPrompt: string,
-  data: GenerationRequest // Объект `data` содержит все исходные правила, включая modelProvider
+  data: GenerationRequest
 ): Promise<string> {
   console.log(
     `[Refiner] Starting LangChain refinement with model: ${
@@ -142,12 +98,9 @@ export async function runUserRefinement(
   );
 
   try {
-    // ИСПРАВЛЕНО: Передаем modelProvider из объекта `data`
     const refinedContent = await refinementChain.invoke({
       originalContent,
       userPrompt,
-      // Устанавливаем провайдера модели, используя данные из исходного запроса,
-      // или Gemini по умолчанию, если он не был указан.
       modelProvider: data.modelProvider || ModelProvider.GEMINI,
     });
     return refinedContent || originalContent;
@@ -161,6 +114,7 @@ export async function runUserRefinement(
   }
 }
 
+// --- ГЛАВНАЯ ЛОГИКА ---
 async function runGenerationWithValidation(
   data: GenerationRequest
 ): Promise<GenerationResult> {
@@ -170,43 +124,52 @@ async function runGenerationWithValidation(
   );
 
   try {
-    // ЗАПУСКАЕМ АГЕНТА, передавая начальное состояние
     const finalState = await generativeAgent.invoke(
       {
         generationRequest: data,
-        // Остальные поля будут инициализированы значениями по умолчанию
+        // Инициализируем остальные поля null или пустыми значениями
+        generatedContent: "",
+        validationResult: null,
+        analysisResult: null,
+        textVariations: null,
+        title: "",
+        attempts: 0,
       },
       {
         configurable: {
-          modelProvider: modelToUse, // Передаем модель через config
+          modelProvider: modelToUse,
         }
       }
     );
 
-    const finalVariations = finalState.textVariations || [finalState.generatedContent];
+    // Граф теперь возвращает полностью готовый массив `TextVariation[]`
+    const finalVariations = finalState.textVariations;
     const title = finalState.title;
-    const validationResult = finalState.validationResult!;
-    const analysisResult = finalState.analysisResult;
-     // checkAdditionalRequirements теперь не нужна, так как анализ делает граф
-     // const additionalChecks = checkAdditionalRequirements(finalContent, data);
  
-     return prepareFinalResult(
+    if (!finalVariations || finalVariations.length === 0) {
+        throw new Error("Generation process finished without producing text variations.");
+    }
+
+    return prepareFinalResult(
       title,
-      finalVariations, // <-- Передаем массив
-      validationResult,
-      analysisResult,
+      finalVariations,
       finalState.attempts,
-      validationResult.isValid
+      true // Если мы дошли досюда, процесс успешен
     );
    } catch (error: any) {
     console.error(`[Generator] LangGraph process failed:`, error);
     const errorMessage = handleGoogleAIError(error).statusMessage;
+    
+    // ИСПРАВЛЕНО: Формируем корректный объект ошибки
     const errorResult: GenerationResult = {
       success: false,
-      content: errorMessage,
       title: "Ошибка генерации",
-      descriptions: [errorMessage],
       attempts: 1,
+      variations: [{
+          description: errorMessage,
+          metrics: {} as any,
+          analysis: { utpAnalysis: [], painPointAnalysis: [] }
+      }]
     };
     return errorResult;
   }
@@ -215,9 +178,7 @@ async function runGenerationWithValidation(
 // --- ФУНКЦИЯ ПОДГОТОВКИ РЕЗУЛЬТАТА ---
 export function prepareFinalResult(
   title: string,
-  descriptions: string[], 
-  validation: ValidationResult,
-  analysis: { utpAnalysis: AnalysisDetail[], painPointAnalysis: AnalysisDetail[] } | null,
+  variations: TextVariation[], 
   attempts: number,
   success: boolean,
   processingLog: { added: string[]; removed: string[] } = {
@@ -225,35 +186,27 @@ export function prepareFinalResult(
     removed: [],
   }
 ): GenerationResult {
-  const keywordDetails: KeywordDetail[] = [];
-  const keywordUsage = validation.metrics.keywordUsageDetails || {};
 
-  const allKeywords = [
-    ...(validation.metrics.missingKeywords || []),
-    ...(validation.metrics.keywordsFound || []),
-  ];
-  const baseContent = descriptions[0]; // Берем первую вариацию как основу для метрик
-  for (const keyword of allKeywords) {
-    const count = keywordUsage[keyword]?.count || 0;
-    const example = findKeywordExample(baseContent, keyword);
-    keywordDetails.push({ keyword, count, example });
-  }
+  // ИСПРАВЛЕНО: Добавляем `boldKeywordsCount` к метрикам каждой вариации
+  const enrichedVariations = variations.map(variation => {
+    // Убеждаемся, что metrics существует, прежде чем добавлять в него свойство
+    const metrics = variation.metrics || {} as any;
+    
+    return {
+      ...variation,
+      metrics: {
+        ...metrics,
+        boldKeywordsCount: (variation.description.match(/\*\*/g) || []).length / 2,
+      }
+    };
+  });
 
   const result: GenerationResult = {
     success,
-    // ИСПРАВЛЕНО: Поле 'content' теперь содержит чистый текст, как и 'descriptions[0]'
-    content: baseContent,
     title,
-    descriptions: descriptions, // Массив с вариациями
-    metrics: {
-      ...validation.metrics,
-      keywordDetails: keywordDetails,
-      boldKeywordsCount: (baseContent.match(/\*\*/g) || []).length / 2,
-    },
-    analysis: analysis || undefined,
+    variations: enrichedVariations, // Используем обогащенный массив
     attempts,
     processingLog,
-    warnings: validation.issues,
   };
 
   return result;
