@@ -36,6 +36,29 @@
         </div>
       </transition>
 
+      <!-- ИСПРАВЛЕНО: Панель вариаций перенесена внутрь этого блока -->
+      <div
+        v-if="result.descriptions && result.descriptions.length > 1"
+        class="bg-white border border-slate-200 rounded-lg p-4"
+      >
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-sm font-medium text-slate-600 mr-2">Вариации:</span>
+          <button
+            v-for="(desc, index) in result.descriptions"
+            :key="index"
+            @click="currentVariationIndex = index"
+            class="px-3 py-1 text-sm font-semibold rounded-full transition-colors"
+            :class="
+              currentVariationIndex === index
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+            "
+          >
+            {{ index + 1 }}
+          </button>
+        </div>
+      </div>
+
       <!-- БЛОК 1: МЕТРИКИ ВАЛИДАТОРА -->
       <div
         v-if="result.metrics"
@@ -76,9 +99,7 @@
         </ul>
       </div>
 
-      <!-- =============================================================== -->
-      <!-- ================= НОВЫЙ БЛОК: АНАЛИЗ СОДЕРЖАНИЯ ================ -->
-      <!-- =============================================================== -->
+      <!-- БЛОК: АНАЛИЗ СОДЕРЖАНИЯ -->
       <div
         v-if="result.analysis"
         class="bg-slate-50 border border-slate-200 rounded-lg p-6"
@@ -162,9 +183,7 @@
           <h3 class="text-lg font-semibold text-slate-800">
             Ваше SEO-описание
           </h3>
-          <!-- ИЗМЕНЕНО: Логика кнопок -->
           <div class="flex items-center gap-4">
-            <!-- Кнопки появляются только в режиме редактирования -->
             <div v-if="isEditing" class="flex items-center gap-2">
               <button
                 @click="cancelEdits"
@@ -180,7 +199,6 @@
                 <span>Сохранить</span>
               </button>
             </div>
-            <!-- Кнопка "Редактировать" видна, когда не в режиме редактирования -->
             <button
               v-else
               @click="startEditing"
@@ -198,7 +216,6 @@
             class="prose max-w-none prose-slate"
             v-html="formattedContent"
           />
-
           <textarea
             v-else
             v-model="editableContent"
@@ -234,22 +251,7 @@
           </button>
         </div>
       </div>
-      <transition name="fade">
-        <div
-          v-if="refineSaveSuccessMessage"
-          class="mt-4 bg-green-100 border border-green-200 text-green-800 text-sm font-medium rounded-lg p-4 text-center"
-        >
-          {{ refineSaveSuccessMessage }}
-        </div>
-      </transition>
-      <transition name="fade">
-        <div
-          v-if="refinementError"
-          class="mt-4 bg-red-100 border border-red-200 text-red-800 text-sm font-medium rounded-lg p-4 text-center"
-        >
-          {{ refinementError }}
-        </div>
-      </transition>
+
       <!-- БЛОК 4: УЛУЧШЕНИЕ С ПОМОЩЬЮ ИИ (REFINE) -->
       <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
         <h3 class="text-lg font-semibold text-slate-800 mb-2">
@@ -283,6 +285,22 @@
             {{ isSaving ? "Сохраняем..." : "💾 Сохранить результат" }}
           </button>
         </div>
+        <transition name="fade">
+          <div
+            v-if="refineSaveSuccessMessage"
+            class="mt-4 bg-green-100 border border-green-200 text-green-800 text-sm font-medium rounded-lg p-4 text-center"
+          >
+            {{ refineSaveSuccessMessage }}
+          </div>
+        </transition>
+        <transition name="fade">
+          <div
+            v-if="refinementError"
+            class="mt-4 bg-red-100 border border-red-200 text-red-800 text-sm font-medium rounded-lg p-4 text-center"
+          >
+            {{ refinementError }}
+          </div>
+        </transition>
       </div>
 
       <!-- БЛОК 5: РАСШИФРОВКА КЛЮЧЕВЫХ СЛОВ -->
@@ -394,27 +412,35 @@ const isRegenerating = ref(false);
 const router = useRouter();
 
 const isEditing = ref(false);
-const editableContent = ref("");
 const metricsJustUpdated = ref(false);
 const showGenerationSuccessBanner = ref(false);
-// ИЗМЕНЕНО: Новое состояние для хранения исходного текста
 const originalContentBeforeEdit = ref("");
+const currentVariationIndex = ref(0);
 
-// ИЗМЕНЕНО: Новая функция для входа в режим редактирования
+const editableContent = computed({
+  get() {
+    if (result.value?.descriptions) {
+      return result.value.descriptions[currentVariationIndex.value] || "";
+    }
+    return "";
+  },
+  set(newValue) {
+    if (result.value?.descriptions) {
+      result.value.descriptions[currentVariationIndex.value] = newValue;
+    }
+  },
+});
+
 const startEditing = () => {
-  // Сохраняем текущее состояние текста перед началом редактирования
   originalContentBeforeEdit.value = editableContent.value;
   isEditing.value = true;
 };
 
-// ИЗМЕНЕНО: Новая функция для отмены изменений
 const cancelEdits = () => {
-  // Возвращаем текст к сохраненному состоянию
   editableContent.value = originalContentBeforeEdit.value;
   isEditing.value = false;
 };
 
-// ИЗМЕНЕНО: Функция теперь только сохраняет и выходит из режима
 const commitEdits = async () => {
   await handleSave("editor");
   isEditing.value = false;
@@ -435,6 +461,9 @@ const revalidateContent = useDebounceFn(async () => {
     if (result.value) {
       result.value.metrics = newMetricsResult.metrics;
       result.value.warnings = newMetricsResult.warnings;
+      if (newMetricsResult.analysis) {
+        result.value.analysis = newMetricsResult.analysis;
+      }
 
       metricsJustUpdated.value = true;
       setTimeout(() => {
@@ -494,8 +523,16 @@ const checkStatus = async () => {
       status.value = "completed";
       result.value = response.result || null;
 
-      if (result.value) {
-        editableContent.value = result.value.description || "";
+      // ИСПРАВЛЕНО: Проверяем наличие и непустоту массива descriptions
+      if (
+        result.value &&
+        result.value.descriptions &&
+        result.value.descriptions.length > 0
+      ) {
+        // editableContent будет автоматически обновлен через computed property
+      } else if (result.value) {
+        // Обработка случая, если descriptions пуст или отсутствует
+        result.value.descriptions = [result.value.content || ""];
       }
 
       if (!result.value) {
@@ -591,8 +628,10 @@ const handleRefinement = async () => {
       method: "POST",
       body: payload,
     });
+    // ИСПРАВЛЕНО: Обновляем весь объект result, чтобы получить новый массив descriptions
     result.value = newResult;
-    editableContent.value = newResult.description || "";
+    // Сбрасываем индекс на первую (и единственную) новую вариацию
+    currentVariationIndex.value = 0;
     refinementPrompt.value = "";
   } catch (err: any) {
     refinementError.value = err.data?.message || "Не удалось улучшить текст.";
@@ -609,8 +648,6 @@ const handleSave = async (source: "editor" | "refine") => {
   refinementError.value = "";
 
   const resultToSave = { ...result.value };
-  resultToSave.description = editableContent.value;
-  resultToSave.content = `**${resultToSave.title}**\n\n${editableContent.value}`;
 
   try {
     await $fetch(`/api/tasks/${props.taskId}`, {

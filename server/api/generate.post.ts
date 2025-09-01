@@ -29,6 +29,7 @@ const requestSchema = z.object({
 
   // ДОБАВЛЕНО: Теперь Zod знает об этом поле и не будет его удалять.
   modelProvider: z.nativeEnum(ModelProvider).optional(),
+  numberOfVariations: z.number().min(1).max(5).optional(),
 });
 
 export default defineEventHandler(async (event) => {
@@ -39,7 +40,7 @@ export default defineEventHandler(async (event) => {
     // Теперь validatedData будет содержать modelProvider, если он был в запросе
     const taskId = await createTask(validatedData, 'queued');
 
-    console.log(`[API /generate] Task ${taskId} created successfully with model: ${validatedData.modelProvider || 'default'}.`);
+    console.log(`[API /generate] Task ${taskId} created successfully with model: ${validatedData.modelProvider || 'default'} for ${validatedData.numberOfVariations || 1} variations.`);
 
     return {
       taskId,

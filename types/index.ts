@@ -27,6 +27,7 @@ export interface GenerationRequest {
   adsPlanned: boolean;
   canChangeVisuals: boolean;
   modelProvider?: ModelProvider;
+  numberOfVariations?: number;
 }
 
 
@@ -116,8 +117,8 @@ export interface GenerationResult {
   success: boolean;
   content: string;
   title: string;
-  description: string;
-  metrics?: ValidationMetrics & { // Теперь этот тип включает все новые поля
+  descriptions: string[];
+  metrics?: ValidationMetrics & { 
     keywordDetails: KeywordDetail[];
     boldKeywordsCount: number;
     utpCovered?: number;

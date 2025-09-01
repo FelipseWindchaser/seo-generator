@@ -33,7 +33,8 @@ interface AgentState {
   generationRequest: GenerationRequest;
   generatedContent: string;
   validationResult: StructuredValidationResult | null;
-  analysisResult: ContentAnalysisResult | null; // НОВОЕ ПОЛЕ
+  analysisResult: ContentAnalysisResult | null;
+  textVariations: string[] | null; // <-- НОВОЕ ПОЛЕ
   attempts: number;
   title: string;
 }
@@ -298,6 +299,68 @@ const fixContentNode = async (state: AgentState): Promise<Partial<AgentState>> =
   return { generatedContent: newContent, attempts: state.attempts + 1 };
 };
 
+// --- НОВЫЙ УЗЕЛ-СПЕЦИАЛИСТ: ГЕНЕРАТОР ВАРИАЦИЙ ---
+
+const variationsSchema = z.object({
+  variations: z.array(z.string()).describe("Массив с N стилистически разными версиями текста"),
+});
+
+// ИЗМЕНЕНО: Создаем TypeScript-тип из Zod-схемы
+type VariationsResponseType = z.infer<typeof variationsSchema>;
+
+const generateVariationsNode = async (state: AgentState): Promise<Partial<AgentState>> => {
+  const { generationRequest, generatedContent } = state;
+  const numVariations = generationRequest.numberOfVariations || 1;
+
+  if (numVariations <= 1) {
+    console.log('[Graph] Single variation requested. Skipping generation.');
+    return { textVariations: [generatedContent] };
+  }
+
+  console.log(`[Graph] Generating ${numVariations} text variations...`);
+  const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.6 });
+
+  const prompt = ChatPromptTemplate.fromTemplate(`
+    Ты — креативный редактор-копирайтер. Твоя задача — взять исходный SEO-текст и создать на его основе {numVariations} стилистически разных версий.
+
+    --- ИСХОДНЫЙ ТЕКСТ (ОБРАЗЕЦ) ---
+    {baseText}
+
+    --- КОНТЕКСТ (для сохранения смысла) ---
+    - Ключевые УТП: {usp}
+    - Обязательные SEO-ключи: {requiredKeywords}
+
+    --- ПРАВИЛА СОЗДАНИЯ ВАРИАЦИЙ ---
+    1.  **СОХРАНЯЙ СУТЬ:** Все вариации должны сохранять исходную структуру (количество абзацев, основную мысль каждого абзаца) и раскрывать те же УТП.
+    2.  **СОХРАНЯЙ SEO:** Все обязательные SEO-ключи ДОЛЖНЫ присутствовать в каждой вариации.
+    3.  **СОХРАНЯЙ ОБЪЕМ:** Длина каждой вариации должна оставаться примерно такой же, как у исходного текста.
+    4.  **МЕНЯЙ СТИЛЬ:** Вариации должны отличаться друг от друга за счет:
+        - Использования синонимов и разных речевых оборотов.
+        - Изменения первых предложений (hooks) в абзацах.
+        - Небольшого изменения тональности (где-то более официально, где-то более дружелюбно).
+        - Перефразирования предложений.
+
+    КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON с одним ключом "variations", который содержит массив из {numVariations} строк.
+  `);
+
+  const chain = prompt.pipe(model.withStructuredOutput(variationsSchema));
+  
+  // ИЗМЕНЕНО: Добавляем явное приведение типа
+  const response = await chain.invoke({
+    baseText: generatedContent,
+    numVariations,
+    usp: generationRequest.usp.join(', '),
+    requiredKeywords: JSON.stringify(generationRequest.requiredKeywords),
+  }) as VariationsResponseType;
+
+  // Добавляем исходный текст как первую, самую надежную вариацию
+  const allVariations = [generatedContent, ...response.variations];
+  // Убеждаемся, что вернули нужное количество
+  const finalVariations = allVariations.slice(0, numVariations);
+
+  return { textVariations: finalVariations };
+};
+
 
 // --- 3. ОБНОВЛЕННЫЙ МАРШРУТИЗАТОР ---
 
@@ -327,16 +390,20 @@ const routeAfterValidation = (state: AgentState): "truncate" | "extend" | "fix_k
 /**
  * @description Маршрутизатор после анализа контента.
  */
-const routeAfterAnalysis = (state: AgentState): "fix_content" | "__end__" => {
+const routeAfterAnalysis = (state: AgentState): "fix_content" | "generate_variations" | "__end__" => {
   const isCovered = state.analysisResult?.isFullyCovered;
   console.log(`[Router] Content coverage: ${isCovered ? 'OK' : 'Needs fixing'}`);
 
-  if (isCovered || state.attempts >= MAX_ATTEMPTS) {
-    return "__end__";
+  if (state.attempts >= MAX_ATTEMPTS) return "__end__";
+
+  if (isCovered) {
+    // Если все раскрыто, идем генерировать вариации
+    return "generate_variations";
   } else {
     return "fix_content";
   }
 };
+
 
 
 // --- 4. ОБНОВЛЕННАЯ СБОРКА ГРАФА ---
@@ -349,6 +416,7 @@ const generativeAgent = new StateGraph<AgentState>({
     analysisResult: { value: (x, y) => y ?? x }, // НОВОЕ ПОЛЕ
     attempts: { value: (x, y) => y ?? x, default: () => 0 },
     title: { value: (x, y) => y ?? x },
+    textVariations: { value: (x, y) => y ?? x }, // <-- НОВОЕ ПОЛЕ
   },
 })
   .addNode("generate", generateNode)
@@ -358,7 +426,7 @@ const generativeAgent = new StateGraph<AgentState>({
   .addNode("validate", validateNode)
   .addNode("analyze_content", analyzeContentNode) // НОВЫЙ УЗЕЛ
   .addNode("fix_content", fixContentNode)       // НОВЫЙ УЗЕЛ
-
+  .addNode("generate_variations", generateVariationsNode)
   .addEdge("__start__", "generate")
   .addEdge("generate", "truncate")
   .addEdge("extend", "truncate")
@@ -368,6 +436,7 @@ const generativeAgent = new StateGraph<AgentState>({
   // После исправления контента мы снова идем на обрезку и валидацию,
   // чтобы убедиться, что SEO не сломалось окончательно.
   .addEdge("fix_content", "truncate")
+  .addEdge("generate_variations", END)
 
   // Условные переходы
   .addConditionalEdges("validate", routeAfterValidation, {
@@ -378,7 +447,9 @@ const generativeAgent = new StateGraph<AgentState>({
     "__end__": END,
   })
   .addConditionalEdges("analyze_content", routeAfterAnalysis, {
-    "fix_content": "fix_content",
+  "fix_content": "fix_content",
+    // ИЗМЕНЕНО: Вместо END, идем на генерацию вариаций
+    "generate_variations": "generate_variations", 
     "__end__": END,
   })
   .compile();
