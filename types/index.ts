@@ -67,6 +67,7 @@ export interface ValidationMetrics {
     middle: number;
     end: number;
   };
+  warnings?: string[];
 }
 
 export interface ReadabilityMetrics {
@@ -138,7 +139,7 @@ export interface GenerationResult {
   //   trustTriggers?: number;
   // };
   attempts: number;
-  warnings?: string[];
+  // warnings?: string[];
   processingLog?: {
     added: string[];
     removed: string[];

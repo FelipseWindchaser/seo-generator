@@ -84,16 +84,22 @@
         </div>
       </div>
 
-      <!-- БЛОК 2: ЗАМЕЧАНИЯ ВАЛИДАТОРА -->
+      <!-- ИЗМЕНЕНО: Возвращаем блок с предупреждениями и привязываем к activeVariation -->
       <div
-        v-if="result.warnings && result.warnings.length > 0"
+        v-if="
+          activeVariation.metrics?.warnings &&
+          activeVariation.metrics.warnings.length > 0
+        "
         class="bg-yellow-50 border border-yellow-200 rounded-lg p-6"
       >
         <h3 class="text-lg font-semibold text-yellow-900 mb-3">
           ⚠️ Замечания валидатора
         </h3>
         <ul class="list-disc list-inside text-sm text-yellow-800 space-y-1">
-          <li v-for="(warning, index) in result.warnings" :key="index">
+          <li
+            v-for="(warning, index) in activeVariation.metrics.warnings"
+            :key="index"
+          >
             {{ warning }}
           </li>
         </ul>

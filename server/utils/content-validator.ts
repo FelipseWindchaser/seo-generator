@@ -1,12 +1,14 @@
-import type { ValidationResult, ValidationMetrics, SemanticMetrics, ReadabilityMetrics, KeywordInstruction } from '~/types'
-import { morphologyService } from './morphology-service'
+// /server/utils/content-validator.ts
 
+import type { ValidationResult, ValidationMetrics, SemanticMetrics, ReadabilityMetrics } from '~/types'
+import { morphologyService } from '~/server/utils/morphology-service'
 
 export type ValidationStatus = "OK" | "MISSING_KEYS" | "TOO_LONG" | "TOO_SHORT" | "NON_CRITICAL_ERRORS";
 
 export interface StructuredValidationResult extends ValidationResult {
     status: ValidationStatus;
 }
+
 export class ContentValidator {
   private readonly minChars = 1800;
   private readonly maxChars = 2000;
@@ -35,39 +37,38 @@ export class ContentValidator {
     this.checkReadabilityIssues(readability, issues);
     const semantic = {} as SemanticMetrics; 
 
-    // --- ФИНАЛЬНАЯ, ПРИОРИТЕЗИРОВАННАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ СТАТУСА ---
-    
     let status: ValidationStatus;
-    
     const hasAnyIssues = issues.length > 0;
 
     if (!hasAnyIssues) {
       status = "OK";
     } else {
-      // Определяем наличие критических ошибок
       const hasMissingKeys = issues.some(issue => issue.startsWith('❌') && issue.includes("Отсутствует обязательный ключ"));
       const isTooLong = issues.some(issue => issue.startsWith('❌') && issue.includes("Текст длинный"));
       const isTooShort = issues.some(issue => issue.startsWith('❌') && issue.includes("Текст короткий"));
 
-      // Применяем логику приоритетов
       if (hasMissingKeys) {
-        status = "MISSING_KEYS"; // Самый высокий приоритет
+        status = "MISSING_KEYS";
       } else if (isTooLong) {
         status = "TOO_LONG";
       } else if (isTooShort) {
         status = "TOO_SHORT";
       } else {
-        // Если критических ошибок нет, но issues не пуст, значит остались только предупреждения
         status = "NON_CRITICAL_ERRORS";
       }
     }
 
-    // `isValid` теперь означает "готов к завершению цикла"
     const isValid = (status === "OK" || status === "NON_CRITICAL_ERRORS");
 
+    // ИСПРАВЛЕНО: Собираем финальный объект metrics, включая warnings
     const finalResult: StructuredValidationResult = {
       isValid,
-      metrics: { ...metrics, readability, semantic },
+      metrics: { 
+        ...metrics, 
+        readability, 
+        semantic,
+        warnings: issues // <-- ДОБАВЛЕНО
+      },
       issues,
       status,
     };
@@ -89,74 +90,31 @@ export class ContentValidator {
     });
   }
 
-  // private calculateMetrics(
-  //   content: string, 
-  //   requiredKeywords: string[],
-  //   optionalKeywords: string[],
-  //   searchResult: { found_keywords: string[], details: Record<string, { count: number }> }
-  // ): ValidationMetrics {
-  //   const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
-    
-  //   let requiredOccurrences = 0;
-  //   requiredKeywords.forEach(keyword => {
-  //       requiredOccurrences += searchResult.details[keyword]?.count || 0;
-  //   });
-
-  //   const keywordDensity = wordCount > 0 ? (requiredOccurrences / wordCount * 100) : 0;
-    
-  //   const foundKeywords = searchResult.found_keywords;
-  //   const usedOptionalCount = optionalKeywords.filter(k => foundKeywords.includes(k)).length;
-  //   const usedRequiredCount = requiredKeywords.filter(k => foundKeywords.includes(k)).length;
-
-  //   return {
-  //     charCount: content.length,
-  //     charCountNoSpaces: content.replace(/\s/g, '').length,
-  //     wordCount,
-  //     requiredKeywordsUsed: usedRequiredCount,
-  //     requiredKeywordsTotal: requiredKeywords.length,
-  //     optionalKeywordsUsed: usedOptionalCount,
-  //     optionalKeywordsTotal: optionalKeywords.length,
-  //     keywordsFound: foundKeywords,
-  //     keywordsUsed: foundKeywords.length,
-  //     totalKeywords: requiredKeywords.length + optionalKeywords.length,
-  //     keywordDensity: Math.round(keywordDensity * 100) / 100,
-  //     keywordOccurrences: requiredOccurrences,
-  //     missingKeywords: requiredKeywords.filter(k => !foundKeywords.includes(k)),
-  //     keywordUsageDetails: searchResult.details,
-  //     keywordPositions: { beginning: 0, middle: 0, end: 0 },
-  //     charDensity: 0,
-  //   };
-  // }
-
-  //Обновленный метод подсчета символов для учета спецсимволов
   private calculateMetrics(
     content: string, 
     requiredKeywords: string[],
     optionalKeywords: string[],
     searchResult: { found_keywords: string[], details: Record<string, { count: number }> }
   ): ValidationMetrics {
-    // Подсчёт символов с учётом Unicode-графем (правильно считает эмодзи, акценты и т.п.)
     const charCount = Array.from(content).length;
     const charCountNoSpaces = Array.from(content.replace(/\s/g, '')).length;
-  
-    // Подсчёт слов
     const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
   
-    // Подсчёт количества вхождений обязательных ключей
     let requiredOccurrences = 0;
     requiredKeywords.forEach(keyword => {
       requiredOccurrences += searchResult.details[keyword]?.count || 0;
     });
   
-    // Плотность ключей в %
     const keywordDensity = wordCount > 0 ? (requiredOccurrences / wordCount * 100) : 0;
   
     const foundKeywords = searchResult.found_keywords;
     const usedOptionalCount = optionalKeywords.filter(k => foundKeywords.includes(k)).length;
     const usedRequiredCount = requiredKeywords.filter(k => foundKeywords.includes(k)).length;
   
+    // ИСПРАВЛЕНО: Возвращаемый объект теперь соответствует типу ValidationMetrics
+    // (поле warnings добавляется на последнем шаге в методе validate)
     return {
-      charCount, // теперь корректный Unicode-подсчёт
+      charCount,
       charCountNoSpaces,
       wordCount,
       requiredKeywordsUsed: usedRequiredCount,
