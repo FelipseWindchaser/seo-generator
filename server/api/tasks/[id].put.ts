@@ -13,6 +13,13 @@ const analysisDetailSchema = z.object({
   evidence: z.string(),
 });
 
+// ИСПРАВЛЕНО: Добавлена схема для KeywordDetail
+const keywordDetailSchema = z.object({
+  keyword: z.string(),
+  count: z.number(),
+  example: z.string(),
+});
+
 // Схема для ValidationMetrics
 const validationMetricsSchema = z.object({
   charCount: z.number(),
@@ -35,14 +42,20 @@ const validationMetricsSchema = z.object({
     end: z.number(),
   }),
   charDensity: z.number(),
-  // Добавляем поле, которое теперь является частью метрик
+  warnings: z.array(z.string()).optional(),
+  // ИСПРАВЛЕНО: Добавлено недостающее поле
+  keywordDetails: z.array(keywordDetailSchema),
+});
+
+// Схема для объекта metrics внутри TextVariation
+const textVariationMetricsSchema = validationMetricsSchema.extend({
   boldKeywordsCount: z.number(),
 });
 
 // Схема для одной вариации текста (TextVariation)
 const textVariationSchema = z.object({
   description: z.string(),
-  metrics: validationMetricsSchema,
+  metrics: textVariationMetricsSchema,
   analysis: z.object({
     utpAnalysis: z.array(analysisDetailSchema),
     painPointAnalysis: z.array(analysisDetailSchema),
@@ -53,14 +66,12 @@ const textVariationSchema = z.object({
 const generationResultSchema = z.object({
   success: z.boolean(),
   title: z.string(),
-  variations: z.array(textVariationSchema), // Валидируем массив вариаций
+  variations: z.array(textVariationSchema),
   attempts: z.number(),
-  warnings: z.array(z.string()).optional(),
   processingLog: z.object({
       added: z.array(z.string()),
       removed: z.array(z.string()),
   }).optional(),
-  // УДАЛЕНО: content, metrics, analysis - они теперь внутри variations
 });
 
 // Схема для валидации всего тела запроса
@@ -78,24 +89,20 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody(event);
 
-  // 1. Валидируем тело запроса по новой, полной схеме
   const validation = updateBodySchema.safeParse(body);
   if (!validation.success) {
-    // Логируем ошибку для отладки на сервере
     console.error('[Task Update] Zod Validation Error:', validation.error.errors);
     throw createError({ statusCode: 400, message: 'Invalid request body', data: validation.error.errors });
   }
   
   const { result } = validation.data;
 
-  // 2. Создаем объект с изменениями для Redis
   const updates: Partial<Task> = {
     result: result,
     status: 'completed',
     completedAt: new Date().toISOString(),
   };
 
-  // 3. Вызываем функцию updateTask для сохранения в Redis
   try {
     await updateTask(taskId, updates);
     return { success: true, message: 'Task updated successfully' };

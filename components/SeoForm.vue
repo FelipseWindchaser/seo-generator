@@ -24,28 +24,6 @@
         быстрее, Groq - дешевле и тупее &#128557;.
       </p>
     </div>
-    <!-- ... после блока выбора модели ... -->
-    <div>
-      <label
-        for="numberOfVariations"
-        class="block text-sm font-medium text-gray-700"
-        >Количество вариаций</label
-      >
-      <select
-        id="numberOfVariations"
-        v-model.number="form.numberOfVariations"
-        class="mt-1 block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
-      >
-        <option>1</option>
-        <option>2</option>
-        <option>3</option>
-        <option>4</option>
-        <option>5</option>
-      </select>
-      <p class="mt-1 text-sm text-gray-500">
-        Система сгенерирует несколько стилистически разных версий текста.
-      </p>
-    </div>
 
     <!-- НОВОЕ ПОЛЕ: Название товара -->
     <div>
@@ -330,7 +308,7 @@ const form = reactive({
   adsPlanned: false,
   canChangeVisuals: false,
   modelProvider: ModelProvider.GEMINI,
-  numberOfVariations: 3, // <-- НОВОЕ ПОЛЕ со значением по умолчанию
+  // numberOfVariations: 3, // <-- НОВОЕ ПОЛЕ со значением по умолчанию
 });
 
 // ИЗМЕНЕНО: Инициализируем ref-массивы напрямую из props

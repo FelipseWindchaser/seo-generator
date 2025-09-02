@@ -27,7 +27,7 @@ export interface GenerationRequest {
   adsPlanned: boolean;
   canChangeVisuals: boolean;
   modelProvider?: ModelProvider;
-  numberOfVariations?: number;
+  // numberOfVariations?: number;
 }
 
 
@@ -68,6 +68,7 @@ export interface ValidationMetrics {
     end: number;
   };
   warnings?: string[];
+  keywordDetails: KeywordDetail[];
 }
 
 export interface ReadabilityMetrics {
@@ -110,14 +111,18 @@ export interface KeywordDetail {
   example: string;
 }
 
+export interface AnalysisDetail {
+  point: string;
+  isCovered: boolean;
+  evidence: string;
+}
+
+
 export interface TextVariation {
   description: string;
-  // ИСПРАВЛЕНО: Тип metrics теперь является полным, как и ожидалось
   metrics: ValidationMetrics & {
     boldKeywordsCount: number;
-    // Мы можем добавить и keywordDetails для полной консистентности,
-    // хотя revalidate его не генерирует, но это сделает тип надежнее.
-    keywordDetails?: KeywordDetail[]; 
+    // keywordDetails?: KeywordDetail[]; 
   };
   analysis: {
     utpAnalysis: AnalysisDetail[];
@@ -150,11 +155,6 @@ export interface GenerationResult {
   // };
 }
 
-export interface AnalysisDetail {
-  point: string;
-  isCovered: boolean;
-  evidence: string;
-}
 
 /**
  * @description Объект задачи, хранящийся в базе данных (например, Redis).

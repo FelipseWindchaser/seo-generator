@@ -111,6 +111,29 @@ export class MorphologyService {
     }
   }
 
+  async lemmatizeWords(words: string[]): Promise<string[]> {
+    if (!words || words.length === 0) {
+      return [];
+    }
+    try {
+      // Используем Promise.all для параллельной обработки всех слов
+      const analyses = await Promise.all(
+        words.map(word => this.analyzeWord(word))
+      );
+
+      // Преобразуем результаты анализа в массив лемм
+      return analyses.map((analysis, index) => {
+        // Если анализ успешен и лемма найдена, возвращаем ее.
+        // Иначе возвращаем исходное слово в нижнем регистре как запасной вариант.
+        return analysis?.lemma || words[index].toLowerCase();
+      });
+    } catch (error) {
+      console.error('[MorphologyService] Batch lemmatization failed:', error);
+      // В случае ошибки возвращаем исходные слова, чтобы не прерывать процесс
+      return words.map(w => w.toLowerCase());
+    }
+  }
+
   public async findKeywordsAdvanced(
     text: string,
     keywords: string[],

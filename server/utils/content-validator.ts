@@ -1,7 +1,25 @@
 // /server/utils/content-validator.ts
 
-import type { ValidationResult, ValidationMetrics, SemanticMetrics, ReadabilityMetrics } from '~/types'
+import type { ValidationResult, ValidationMetrics, SemanticMetrics, ReadabilityMetrics, KeywordDetail } from '~/types'
 import { morphologyService } from '~/server/utils/morphology-service'
+
+// Хелпер для поиска примера вынесен сюда для инкапсуляции логики
+function findKeywordExample(content: string, keyword: string): string {
+  const contentLower = content.toLowerCase();
+  const searchKeyword = keyword.split(" ")[0];
+  const pos = contentLower.indexOf(searchKeyword.toLowerCase());
+  if (pos === -1) return "Пример не найден";
+  const start = Math.max(0, pos - 30);
+  const end = Math.min(content.length, pos + keyword.length + 30);
+  let example = content.slice(start, end);
+  if (start > 0) example = "..." + example;
+  if (end < content.length) example = example + "...";
+  const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return example.replace(
+    new RegExp(escapeRegex(keyword), "ig"),
+    (match) => `<strong>${match}</strong>`
+  );
+}
 
 export type ValidationStatus = "OK" | "MISSING_KEYS" | "TOO_LONG" | "TOO_SHORT" | "NON_CRITICAL_ERRORS";
 
@@ -23,14 +41,22 @@ export class ContentValidator {
     console.log(`\n--- [Validator] START validation for content (${content.length} chars) ---`);
     
     const issues: string[] = [];
-    const allKeywords = [...requiredKeywords, ...optionalKeywords];
 
-    const searchResult = await morphologyService.findKeywordsAdvanced(content, allKeywords, 0);
+    // Шаг 1: Нормализуем все входные ключевые слова для поиска
+    const normalizedRequired = await morphologyService.lemmatizeWords(requiredKeywords);
+    const normalizedOptional = await morphologyService.lemmatizeWords(optionalKeywords);
+    const allNormalizedKeywords = [...new Set([...normalizedRequired, ...normalizedOptional])];
+    
+    console.log(`[Validator] Searching for normalized keywords:`, allNormalizedKeywords);
 
-    const metrics = this.calculateMetrics(content, requiredKeywords, optionalKeywords, searchResult);
+    // Шаг 2: Ищем в тексте нормализованные ключи
+    const searchResult = await morphologyService.findKeywordsAdvanced(content, allNormalizedKeywords, 0);
+
+    // Шаг 3: Собираем метрики и проверяем правила
+    const metrics = await this.calculateMetrics(content, requiredKeywords, optionalKeywords, searchResult);
     
     this.checkLength(metrics, issues);
-    this.checkKeywordUsage(metrics.keywordUsageDetails, requiredKeywords, issues);
+    this.checkKeywordUsage(metrics.keywordDetails, requiredKeywords, issues);
     this.checkDensity(metrics, issues);
 
     const readability = this.checkReadability(content);
@@ -43,31 +69,25 @@ export class ContentValidator {
     if (!hasAnyIssues) {
       status = "OK";
     } else {
-      const hasMissingKeys = issues.some(issue => issue.startsWith('❌') && issue.includes("Отсутствует обязательный ключ"));
-      const isTooLong = issues.some(issue => issue.startsWith('❌') && issue.includes("Текст длинный"));
-      const isTooShort = issues.some(issue => issue.startsWith('❌') && issue.includes("Текст короткий"));
+      const hasMissingKeys = issues.some(issue => issue.startsWith('❌'));
+      const isTooLong = issues.some(issue => issue.includes("Текст длинный"));
+      const isTooShort = issues.some(issue => issue.includes("Текст короткий"));
 
-      if (hasMissingKeys) {
-        status = "MISSING_KEYS";
-      } else if (isTooLong) {
-        status = "TOO_LONG";
-      } else if (isTooShort) {
-        status = "TOO_SHORT";
-      } else {
-        status = "NON_CRITICAL_ERRORS";
-      }
+      if (hasMissingKeys) status = "MISSING_KEYS";
+      else if (isTooLong) status = "TOO_LONG";
+      else if (isTooShort) status = "TOO_SHORT";
+      else status = "NON_CRITICAL_ERRORS";
     }
 
     const isValid = (status === "OK" || status === "NON_CRITICAL_ERRORS");
 
-    // ИСПРАВЛЕНО: Собираем финальный объект metrics, включая warnings
     const finalResult: StructuredValidationResult = {
       isValid,
       metrics: { 
         ...metrics, 
         readability, 
         semantic,
-        warnings: issues // <-- ДОБАВЛЕНО
+        warnings: issues
       },
       issues,
       status,
@@ -78,58 +98,73 @@ export class ContentValidator {
   }
 
   private checkKeywordUsage(
-    foundDetails: Record<string, { count: number }>, 
+    keywordDetails: KeywordDetail[], 
     requiredKeywords: string[], 
     issues: string[]
   ): void {
+    const detailsMap = new Map(keywordDetails.map(d => [d.keyword, d.count]));
+
     requiredKeywords.forEach(keyword => {
-      const foundCount = foundDetails[keyword]?.count || 0;
+      const foundCount = detailsMap.get(keyword) || 0;
       if (foundCount < 1) { 
         issues.push(`❌ Отсутствует обязательный ключ: "${keyword}".`);
       }
     });
   }
 
-  private calculateMetrics(
+  private async calculateMetrics(
     content: string, 
-    requiredKeywords: string[],
-    optionalKeywords: string[],
+    originalRequired: string[],
+    originalOptional: string[],
     searchResult: { found_keywords: string[], details: Record<string, { count: number }> }
-  ): ValidationMetrics {
+  ): Promise<ValidationMetrics> {
     const charCount = Array.from(content).length;
     const charCountNoSpaces = Array.from(content.replace(/\s/g, '')).length;
     const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
   
+    const allOriginalKeywords = [...originalRequired, ...originalOptional];
+    const lemmas = await morphologyService.lemmatizeWords(allOriginalKeywords);
+    const originalToLemmaMap = new Map<string, string>();
+    allOriginalKeywords.forEach((kw, i) => originalToLemmaMap.set(kw, lemmas[i]));
+
+    const keywordDetails: KeywordDetail[] = allOriginalKeywords.map(originalKeyword => {
+        const lemma = originalToLemmaMap.get(originalKeyword) || '';
+        return {
+            keyword: originalKeyword,
+            count: searchResult.details[lemma]?.count || 0,
+            example: findKeywordExample(content, originalKeyword)
+        };
+    });
+
+    const detailsMap = new Map(keywordDetails.map(d => [d.keyword, d.count]));
     let requiredOccurrences = 0;
-    requiredKeywords.forEach(keyword => {
-      requiredOccurrences += searchResult.details[keyword]?.count || 0;
+    originalRequired.forEach(kw => {
+        requiredOccurrences += detailsMap.get(kw) || 0;
     });
   
     const keywordDensity = wordCount > 0 ? (requiredOccurrences / wordCount * 100) : 0;
   
-    const foundKeywords = searchResult.found_keywords;
-    const usedOptionalCount = optionalKeywords.filter(k => foundKeywords.includes(k)).length;
-    const usedRequiredCount = requiredKeywords.filter(k => foundKeywords.includes(k)).length;
+    const usedRequiredCount = originalRequired.filter(kw => (detailsMap.get(kw) || 0) > 0).length;
+    const usedOptionalCount = originalOptional.filter(kw => (detailsMap.get(kw) || 0) > 0).length;
   
-    // ИСПРАВЛЕНО: Возвращаемый объект теперь соответствует типу ValidationMetrics
-    // (поле warnings добавляется на последнем шаге в методе validate)
     return {
       charCount,
       charCountNoSpaces,
       wordCount,
       requiredKeywordsUsed: usedRequiredCount,
-      requiredKeywordsTotal: requiredKeywords.length,
+      requiredKeywordsTotal: originalRequired.length,
       optionalKeywordsUsed: usedOptionalCount,
-      optionalKeywordsTotal: optionalKeywords.length,
-      keywordsFound: foundKeywords,
-      keywordsUsed: foundKeywords.length,
-      totalKeywords: requiredKeywords.length + optionalKeywords.length,
+      optionalKeywordsTotal: originalOptional.length,
+      keywordsFound: searchResult.found_keywords,
+      keywordsUsed: searchResult.found_keywords.length,
+      totalKeywords: allOriginalKeywords.length,
       keywordDensity: Math.round(keywordDensity * 100) / 100,
       keywordOccurrences: requiredOccurrences,
-      missingKeywords: requiredKeywords.filter(k => !foundKeywords.includes(k)),
+      missingKeywords: originalRequired.filter(kw => (detailsMap.get(kw) || 0) === 0),
       keywordUsageDetails: searchResult.details,
-      keywordPositions: { beginning: 0, middle: 0, end: 0 },
+      keywordDetails: keywordDetails,
       charDensity: 0,
+      keywordPositions: { beginning: 0, middle: 0, end: 0 },
     };
   }
   

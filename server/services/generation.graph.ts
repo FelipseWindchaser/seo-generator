@@ -4,16 +4,17 @@ import { StateGraph, END } from "@langchain/langgraph";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { z } from "zod";
-import type { GenerationRequest, AnalysisDetail, TextVariation } from "~/types";
+import type { GenerationRequest, AnalysisDetail } from "~/types";
 import { getModel, ModelProvider } from "./langchain.service";
 import { ContentValidator, StructuredValidationResult } from "~/server/utils/content-validator";
 import { intelligentTruncate } from "~/server/utils/text-trimmer";
+import { ContentAnalyzer } from "~/server/utils/content-analyzer";
 
 const validator = new ContentValidator();
 const MAX_ATTEMPTS = 8;
 const MAX_CONTENT_LENGTH = 2000;
 
-// --- 1. РАСШИРЕНИЕ СОСТОЯНИЯ ГРАФА ---
+// --- 1. УПРОЩЕННОЕ СОСТОЯНИЕ ГРАФА ---
 
 interface ContentAnalysisResult {
   utpAnalysis: AnalysisDetail[];
@@ -28,7 +29,7 @@ interface AgentState {
   generatedContent: string;
   validationResult: StructuredValidationResult | null;
   analysisResult: ContentAnalysisResult | null;
-  textVariations: TextVariation[] | null;
+  // УДАЛЕНО: textVariations больше не является частью этого графа
   attempts: number;
   title: string;
 }
@@ -59,7 +60,7 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
        - 2-ой абзац: функции и технологии. В этом абзаце постарайся уместить большую часть ключей, не попавших в первый абзац.
        - 3-ий абзац: отличия от аналогов, УТП, отзывы. В этом абзаце постарайся уместить оставшиеся ключи.
        - 4-ый абзац: кому подойдёт и как упростит жизнь. В этом абзаце, если все еще остались неиспользованные ключи, добавь их в первое предложение.
-    ВЫЖНО: Абзацы должны быть КОРОТКИМИ, легкочитаемыми и связанными между собой логически.
+    ВЫЖНО: Абзацы должны быть КОРОТКИМИ (3-5 небольших предложения), легкочитаемыми и связанными между собой логически.
     5. Запрет: без списков, подзаголовков, маркировок — только цельный текст.
     Верни ответ в формате:
     ===ЗАГОЛОВОК===
@@ -162,59 +163,11 @@ const validateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
 };
 
 const analysisSchema = z.object({
-  utpAnalysis: z.array(z.object({
-    point: z.string(),
-    isCovered: z.boolean(),
-    evidence: z.string(),
-  })),
-  painPointAnalysis: z.array(z.object({
-    point: z.string(),
-    isCovered: z.boolean(),
-    evidence: z.string(),
-  })),
+  utpAnalysis: z.array(z.object({ point: z.string(), isCovered: z.boolean(), evidence: z.string() })),
+  painPointAnalysis: z.array(z.object({ point: z.string(), isCovered: z.boolean(), evidence: z.string() })),
 });
 type AnalysisResponseType = z.infer<typeof analysisSchema>;
 
-class ContentAnalyzer {
-  async analyze(text: string, request: GenerationRequest): Promise<AnalysisResponseType> {
-    const model = getModel(request.modelProvider || ModelProvider.GEMINI, { temperature: 0.0 });
-    const prompt = ChatPromptTemplate.fromTemplate(`
-      Ты — умный и внимательный ассистент-аналитик. Твоя задача — найти семантическое подтверждение для каждого тезиса в предоставленном тексте. Ты должен понимать смысл, а не просто искать точные совпадения слов.
-      --- ТЕКСТ ДЛЯ АНАЛИЗА ---
-      {text}
-      --- СПИСОК УТП (Уникальные Торговые Преимущества) ---
-      {usp}
-      --- СПИСОК БОЛЕЙ (Проблемы из отзывов, которые нужно отработать) ---
-      {reviews}
-      --- ЗАДАЧА И ПРАВИЛА ---
-      Для КАЖДОГО пункта из УТП и БОЛЕЙ найди в тексте наиболее релевантное предложение, которое подтверждает этот тезис, и вынеси вердикт.
-      - isCovered: true, если СМЫСЛ тезиса передан в тексте, даже если использованы другие слова (синонимы, перефразирование).
-      - isCovered: false, если тезис в тексте не упоминается.
-      - evidence: Если isCovered: true, приведи ТОЧНУЮ цитату (одно полное предложение) из текста, которое лучше всего доказывает раскрытие тезиса. Если false, оставь пустую строку.
-      --- ПРИМЕРЫ ПРАВИЛЬНОГО АНАЛИЗА ---
-      Пример 1:
-      - Тезис: "Гарантия 3 года"
-      - Предложение в тексте: "Мы настолько уверены в качестве нашей соковыжималки, что предоставляем на нее трехлетнюю гарантию."
-      - Твой вывод: {{ "point": "Гарантия 3 года", "isCovered": true, "evidence": "Мы настолько уверены в качестве нашей соковыжималки, что предоставляем на нее трехлетнюю гарантию." }}
-      Пример 2:
-      - Тезис: "Очень шумная"
-      - Предложение в тексте: "Благодаря инверторному мотору нового поколения, устройство работает практически бесшумно, позволяя готовить сок даже ранним утром."
-      - Твой вывод: {{ "point": "Очень шумная", "isCovered": true, "evidence": "Благодаря инверторному мотору нового поколения, устройство работает практически бесшумно, позволяя готовить сок даже ранним утром." }}
-      Пример 3:
-      - Тезис: "Подходит для твердых овощей"
-      - Предложение в тексте: "Наш прибор отлично справляется с яблоками и апельсинами."
-      - Твой вывод: {{ "point": "Подходит для твердых овощей", "isCovered": false, "evidence": "" }} (потому что яблоки и апельсины - это фрукты, а не твердые овощи, как морковь или свекла).
-      КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON, соответствующем схеме.
-    `);
-    const chain = prompt.pipe(model.withStructuredOutput(analysisSchema));
-    const response = await chain.invoke({
-      text: text,
-      usp: JSON.stringify(request.usp),
-      reviews: request.reviews,
-    }) as AnalysisResponseType;
-    return response;
-  }
-}
 
 const analyzeContentNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Analyzing base content coverage...`);
@@ -258,109 +211,33 @@ const fixContentNode = async (state: AgentState): Promise<Partial<AgentState>> =
   return { generatedContent: newContent, attempts: state.attempts + 1 };
 };
 
-const variationsSchema = z.object({
-  variations: z.array(z.string()).describe("Массив с N стилистически разными версиями текста"),
-});
-type VariationsResponseType = z.infer<typeof variationsSchema>;
-
-async function generateVariationStrings(baseText: string, request: GenerationRequest): Promise<string[]> {
-    const numVariations = (request.numberOfVariations || 1) - 1;
-    if (numVariations < 1) return [];
-    const model = getModel(request.modelProvider || ModelProvider.GEMINI, { temperature: 0.6 });
-    const prompt = ChatPromptTemplate.fromTemplate(`
-    Ты — креативный редактор-копирайтер. Твоя задача — взять исходный SEO-текст и создать на его основе {numVariations} стилистически разных версий.
-    --- ИСХОДНЫЙ ТЕКСТ (ОБРАЗЕЦ) ---
-    {baseText}
-    --- КОНТЕКСТ (для сохранения смысла) ---
-    - Ключевые УТП: {usp}
-    - Обязательные SEO-ключи: {requiredKeywords}
-    --- ПРАВИЛА СОЗДАНИЯ ВАРИАЦИЙ ---
-    1.  **СОХРАНЯЙ СУТЬ:** Все вариации должны сохранять исходную структуру и раскрывать те же УТП.
-    2.  **СОХРАНЯЙ SEO:** Все обязательные SEO-ключи ДОЛЖНЫ присутствовать в каждой вариации.
-    3.  **СОХРАНЯЙ ОБЪЕМ:** Длина каждой вариации должна оставаться примерно такой же, как у исходного текста.
-    4.  **МЕНЯЙ СТИЛЬ:** Вариации должны отличаться за счет использования синонимов, изменения первых предложений, небольшого изменения тональности и перефразирования.
-    КРИТИЧЕСКИ ВАЖНО: Верни ответ ТОЛЬКО в формате JSON с одним ключом "variations", который содержит массив из {numVariations} строк.
-  `);
-    const chain = prompt.pipe(model.withStructuredOutput(variationsSchema));
-    const response = await chain.invoke({
-        baseText,
-        numVariations,
-        usp: request.usp.join(', '),
-        requiredKeywords: JSON.stringify(request.requiredKeywords),
-    }) as VariationsResponseType;
-    return response.variations;
-}
-
-const generateAndAnalyzeVariationsNode = async (state: AgentState): Promise<Partial<AgentState>> => {
-  const { generationRequest, generatedContent, analysisResult, validationResult } = state;
-  const numVariations = generationRequest.numberOfVariations || 1;
-  const contentAnalyzer = new ContentAnalyzer();
-  const baseVariation: TextVariation = {
-    description: generatedContent,
-    metrics: {
-      ...validationResult!.metrics,
-      boldKeywordsCount: (generatedContent.match(/\*\*/g) || []).length / 2,
-    },
-    analysis: {
-      utpAnalysis: analysisResult!.utpAnalysis,
-      painPointAnalysis: analysisResult!.painPointAnalysis,
-    },
-  };
-  if (numVariations <= 1) {
-    console.log('[Graph] Single variation requested. Finalizing.');
-    return { textVariations: [baseVariation] };
-  }
-  console.log(`[Graph] Generating and analyzing ${numVariations - 1} additional variations...`);
-  const additionalStrings = await generateVariationStrings(generatedContent, generationRequest);
-  const additionalVariations = await Promise.all(additionalStrings.map(async (text) => {
-    const [validation, analysis] = await Promise.all([
-      validator.validate(text, generationRequest.requiredKeywords, generationRequest.optionalKeywords),
-      contentAnalyzer.analyze(text, generationRequest)
-    ]);
-    return {
-      description: text,
-      metrics: {
-        ...validation.metrics,
-        boldKeywordsCount: (text.match(/\*\*/g) || []).length / 2,
-      },
-      analysis: {
-        utpAnalysis: analysis.utpAnalysis,
-        painPointAnalysis: analysis.painPointAnalysis,
-      },
-    };
-  }));
-  return { textVariations: [baseVariation, ...additionalVariations] };
-};
-
 // --- МАРШРУТИЗАТОРЫ ---
 
 const routeAfterValidation = (state: AgentState): "truncate" | "extend" | "fix_keys" | "analyze_content" | "__end__" => {
   const seoStatus = state.validationResult?.status;
   console.log(`[Router] SEO Status: ${seoStatus}, Attempts: ${state.attempts}`);
-  // ИСПРАВЛЕНО: Убираем проверку на MAX_ATTEMPTS отсюда
+  if (state.attempts >= MAX_ATTEMPTS) {
+    console.log('[Router] Max attempts reached on SEO cycle. Moving to content analysis.');
+    return "analyze_content";
+  }
   if (seoStatus === "MISSING_KEYS") return "fix_keys";
   if (seoStatus === "TOO_LONG") return "truncate";
   if (seoStatus === "TOO_SHORT") return "extend";
   if (seoStatus === "OK" || seoStatus === "NON_CRITICAL_ERRORS") {
     return "analyze_content";
   }
-  // Если SEO-цикл зашел в тупик, но попытки не исчерпаны, все равно идем на анализ
-  if (state.attempts < MAX_ATTEMPTS) {
-      return "analyze_content";
-  }
   return "__end__";
 };
 
-const routeAfterAnalysis = (state: AgentState): "fix_content" | "generate_and_analyze_variations" | "__end__" => {
+const routeAfterAnalysis = (state: AgentState): "fix_content" | "__end__" => {
   const isCovered = state.analysisResult?.isFullyCovered;
   console.log(`[Router] Content coverage: ${isCovered ? 'OK' : 'Needs fixing'}`);
-  // ИСПРАВЛЕНО: Проверка на MAX_ATTEMPTS теперь здесь
   if (state.attempts >= MAX_ATTEMPTS) {
-      console.log('[Router] Max attempts reached. Skipping content fix, generating variations.');
-      return "generate_and_analyze_variations";
+      console.log('[Router] Max attempts reached. Skipping content fix, finishing.');
+      return "__end__";
   }
   if (isCovered) {
-    return "generate_and_analyze_variations";
+    return "__end__";
   } else {
     return "fix_content";
   }
@@ -374,7 +251,6 @@ const generativeAgent = new StateGraph<AgentState>({
     generatedContent: { value: (x, y) => y ?? x },
     validationResult: { value: (x, y) => y ?? x },
     analysisResult: { value: (x, y) => y ?? x },
-    textVariations: { value: (x, y) => y ?? x },
     attempts: { value: (x, y) => y ?? x, default: () => 0 },
     title: { value: (x, y) => y ?? x },
   },
@@ -386,7 +262,6 @@ const generativeAgent = new StateGraph<AgentState>({
   .addNode("validate", validateNode)
   .addNode("analyze_content", analyzeContentNode)
   .addNode("fix_content", fixContentNode)
-  .addNode("generate_and_analyze_variations", generateAndAnalyzeVariationsNode)
 
   .addEdge("__start__", "generate")
   .addEdge("generate", "truncate")
@@ -394,7 +269,6 @@ const generativeAgent = new StateGraph<AgentState>({
   .addEdge("fix_keys", "truncate")
   .addEdge("truncate", "validate")
   .addEdge("fix_content", "truncate")
-  .addEdge("generate_and_analyze_variations", END)
 
   .addConditionalEdges("validate", routeAfterValidation, {
     "fix_keys": "fix_keys",
@@ -405,7 +279,6 @@ const generativeAgent = new StateGraph<AgentState>({
   })
   .addConditionalEdges("analyze_content", routeAfterAnalysis, {
     "fix_content": "fix_content",
-    "generate_and_analyze_variations": "generate_and_analyze_variations",
     "__end__": END,
   })
   .compile();

@@ -7,10 +7,10 @@ import type {
   ValidationResult,
   KeywordDetail,
   AnalysisDetail,
-  TextVariation, // <-- Импортируем новый тип
+  TextVariation,
 } from "~/types";
 import { ContentValidator } from "~/server/utils/content-validator";
-import { handleGoogleAIError } from "~/server/utils/_error-handler";
+// import { handleGoogleAIError } from "~/server/utils/error-handler";
 import { getQueuedTasks, updateTask } from "~/server/utils/redis";
 import { generativeAgent } from "~/server/services/generation.graph";
 import {
@@ -66,14 +66,13 @@ async function processNextTaskInQueue() {
         ? handleGoogleAIError(error).statusMessage
         : error.message || "Неизвестная критическая ошибка.";
 
-    // ИСПРАВЛЕНО: Формируем корректный объект ошибки
     const errorResult: GenerationResult = {
         success: false,
         title: "Ошибка генерации",
         attempts: 1,
         variations: [{
             description: errorMessage,
-            metrics: {} as any, // Заполняем пустыми, но существующими объектами
+            metrics: {} as any,
             analysis: { utpAnalysis: [], painPointAnalysis: [] }
         }]
     };
@@ -127,11 +126,9 @@ async function runGenerationWithValidation(
     const finalState = await generativeAgent.invoke(
       {
         generationRequest: data,
-        // Инициализируем остальные поля null или пустыми значениями
         generatedContent: "",
         validationResult: null,
         analysisResult: null,
-        textVariations: null,
         title: "",
         attempts: 0,
       },
@@ -142,25 +139,34 @@ async function runGenerationWithValidation(
       }
     );
 
-    // Граф теперь возвращает полностью готовый массив `TextVariation[]`
-    const finalVariations = finalState.textVariations;
-    const title = finalState.title;
- 
-    if (!finalVariations || finalVariations.length === 0) {
-        throw new Error("Generation process finished without producing text variations.");
+    // ИСПРАВЛЕНО: Мы больше не ожидаем `textVariations` от графа.
+    // Вместо этого мы собираем одну-единственную базовую вариацию из финального состояния.
+    if (!finalState.generatedContent || !finalState.validationResult || !finalState.analysisResult) {
+        throw new Error("Core generation process failed to produce a complete result.");
     }
 
-    return prepareFinalResult(
-      title,
-      finalVariations,
+    const baseVariation: TextVariation = {
+        description: finalState.generatedContent,
+        metrics: {
+            ...finalState.validationResult.metrics,
+            boldKeywordsCount: (finalState.generatedContent.match(/\*\*/g) || []).length / 2,
+        },
+        analysis: {
+            utpAnalysis: finalState.analysisResult.utpAnalysis,
+            painPointAnalysis: finalState.analysisResult.painPointAnalysis,
+        }
+    };
+ 
+     return prepareFinalResult(
+      finalState.title,
+      [baseVariation], // Упаковываем одну созданную вариацию в массив
       finalState.attempts,
-      true // Если мы дошли досюда, процесс успешен
+      true
     );
    } catch (error: any) {
     console.error(`[Generator] LangGraph process failed:`, error);
-    const errorMessage = handleGoogleAIError(error).statusMessage;
+    const errorMessage = error.message || handleGoogleAIError(error).statusMessage;
     
-    // ИСПРАВЛЕНО: Формируем корректный объект ошибки
     const errorResult: GenerationResult = {
       success: false,
       title: "Ошибка генерации",
@@ -186,25 +192,11 @@ export function prepareFinalResult(
     removed: [],
   }
 ): GenerationResult {
-
-  // ИСПРАВЛЕНО: Добавляем `boldKeywordsCount` к метрикам каждой вариации
-  const enrichedVariations = variations.map(variation => {
-    // Убеждаемся, что metrics существует, прежде чем добавлять в него свойство
-    const metrics = variation.metrics || {} as any;
-    
-    return {
-      ...variation,
-      metrics: {
-        ...metrics,
-        boldKeywordsCount: (variation.description.match(/\*\*/g) || []).length / 2,
-      }
-    };
-  });
-
+  
   const result: GenerationResult = {
     success,
     title,
-    variations: enrichedVariations, // Используем обогащенный массив
+    variations: variations,
     attempts,
     processingLog,
   };

@@ -84,7 +84,7 @@
         </div>
       </div>
 
-      <!-- ИЗМЕНЕНО: Возвращаем блок с предупреждениями и привязываем к activeVariation -->
+      <!-- БЛОК 2: ЗАМЕЧАНИЯ ВАЛИДАТОРА -->
       <div
         v-if="
           activeVariation.metrics?.warnings &&
@@ -259,7 +259,47 @@
         </div>
       </div>
 
-      <!-- БЛОК 4: УЛУЧШЕНИЕ С ПОМОЩЬЮ ИИ (REFINE) -->
+      <!-- БЛОК 4: ГЕНЕРАЦИЯ ВАРИАЦИЙ -->
+      <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
+        <h3 class="text-lg font-semibold text-slate-800 mb-2">
+          Сгенерировать вариации
+        </h3>
+        <p class="text-sm text-slate-600 mb-4">
+          Создать несколько стилистически уникальных версий на основе текущего
+          активного текста.
+        </p>
+        <div class="flex items-center gap-4">
+          <select
+            v-model.number="numNewVariations"
+            class="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+          >
+            <option>2</option>
+            <option>3</option>
+            <option>4</option>
+          </select>
+          <button
+            @click="handleGenerateVariations"
+            :disabled="isGeneratingVariations"
+            class="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-slate-400 flex items-center justify-center font-medium whitespace-nowrap"
+          >
+            <LoadingSpinner
+              v-if="isGeneratingVariations"
+              class="mr-2"
+              :size="20"
+            />
+            {{
+              isGeneratingVariations
+                ? "Создаем..."
+                : `✨ Создать ${numNewVariations} новых варианта`
+            }}
+          </button>
+        </div>
+        <p v-if="variationGenerationError" class="text-sm text-red-600 mt-2">
+          {{ variationGenerationError }}
+        </p>
+      </div>
+
+      <!-- БЛОК 5: УЛУЧШЕНИЕ С ПОМОЩЬЮ ИИ (REFINE) -->
       <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
         <h3 class="text-lg font-semibold text-slate-800 mb-2">
           Улучшить с помощью ИИ
@@ -310,7 +350,7 @@
         </transition>
       </div>
 
-      <!-- БЛОК 5: РАСШИФРОВКА КЛЮЧЕВЫХ СЛОВ -->
+      <!-- БЛОК 6: РАСШИФРОВКА КЛЮЧЕВЫХ СЛОВ -->
       <div
         v-if="activeVariation.metrics"
         class="bg-slate-50 border border-slate-200 rounded-lg p-6"
@@ -336,19 +376,19 @@
               </div>
               <ul class="text-sm">
                 <li
-                  v-for="(keyword, index) in requiredKeywordsList"
-                  :key="keyword.name"
+                  v-for="(detail, index) in requiredKeywordsList"
+                  :key="detail.keyword"
                   class="flex justify-between items-center py-2 px-3"
                   :class="{ 'border-t border-slate-100': index > 0 }"
                 >
-                  <span class="text-slate-700">{{ keyword.name }}</span>
+                  <span class="text-slate-700">{{ detail.keyword }}</span>
                   <span
                     :class="
-                      keyword.count > 0 ? 'text-green-600' : 'text-red-600'
+                      detail.count > 0 ? 'text-green-600' : 'text-red-600'
                     "
                     class="font-mono bg-slate-200 text-xs px-2 py-0.5 rounded-full font-semibold"
                   >
-                    {{ keyword.count }}
+                    {{ detail.count }}
                   </span>
                 </li>
               </ul>
@@ -371,15 +411,15 @@
               </div>
               <ul class="text-sm">
                 <li
-                  v-for="(keyword, index) in optionalKeywordsList"
-                  :key="keyword.name"
+                  v-for="(detail, index) in optionalKeywordsList"
+                  :key="detail.keyword"
                   class="flex justify-between items-center py-2 px-3"
                   :class="{ 'border-t border-slate-100': index > 0 }"
                 >
-                  <span class="text-slate-700">{{ keyword.name }}</span>
+                  <span class="text-slate-700">{{ detail.keyword }}</span>
                   <span
                     class="font-mono bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold"
-                    >{{ keyword.count }}</span
+                    >{{ detail.count }}</span
                   >
                 </li>
               </ul>
@@ -428,12 +468,14 @@ const showGenerationSuccessBanner = ref(false);
 const originalContentBeforeEdit = ref("");
 const currentVariationIndex = ref(0);
 
-// --- ЦЕНТРАЛИЗОВАННЫЙ ДОСТУП К ДАННЫМ АКТИВНОЙ ВАРИАЦИИ ---
+const isGeneratingVariations = ref(false);
+const variationGenerationError = ref("");
+const numNewVariations = ref(2);
+
 const activeVariation = computed<TextVariation>(() => {
   if (result.value && result.value.variations[currentVariationIndex.value]) {
     return result.value.variations[currentVariationIndex.value];
   }
-  // Возвращаем "пустую" структуру, чтобы избежать ошибок в шаблоне до загрузки данных
   return {
     description: "",
     metrics: {} as any,
@@ -544,7 +586,6 @@ const checkStatus = async () => {
       status.value = "completed";
       result.value = response.result || null;
 
-      // ИСПРАВЛЕНО: Защита от пустого массива variations
       if (
         result.value &&
         (!result.value.variations || result.value.variations.length === 0)
@@ -609,31 +650,27 @@ const handleRetry = () => {
 const requiredKeywordsList = computed(() => {
   if (
     !originalRequest.value ||
-    !activeVariation.value.metrics?.keywordUsageDetails
+    !activeVariation.value.metrics?.keywordDetails
   ) {
     return [];
   }
-  return originalRequest.value.requiredKeywords.map((keywordName) => ({
-    name: keywordName,
-    count:
-      activeVariation.value.metrics.keywordUsageDetails[keywordName]?.count ||
-      0,
-  }));
+  const requiredSet = new Set(originalRequest.value.requiredKeywords);
+  return activeVariation.value.metrics.keywordDetails.filter((detail) =>
+    requiredSet.has(detail.keyword)
+  );
 });
 
 const optionalKeywordsList = computed(() => {
   if (
     !originalRequest.value ||
-    !activeVariation.value.metrics?.keywordUsageDetails
+    !activeVariation.value.metrics?.keywordDetails
   ) {
     return [];
   }
-  return originalRequest.value.optionalKeywords.map((keywordName) => ({
-    name: keywordName,
-    count:
-      activeVariation.value.metrics.keywordUsageDetails[keywordName]?.count ||
-      0,
-  }));
+  const optionalSet = new Set(originalRequest.value.optionalKeywords);
+  return activeVariation.value.metrics.keywordDetails.filter((detail) =>
+    optionalSet.has(detail.keyword)
+  );
 });
 
 const handleRefinement = async () => {
@@ -698,6 +735,35 @@ const handleSave = async (source: "editor" | "refine") => {
       err.data?.message || "Не удалось сохранить результат.";
   } finally {
     isSaving.value = false;
+  }
+};
+
+const handleGenerateVariations = async () => {
+  if (!result.value || !originalRequest.value) return;
+
+  isGeneratingVariations.value = true;
+  variationGenerationError.value = "";
+  try {
+    const newVariations = await $fetch<TextVariation[]>(
+      "/api/variations/generate",
+      {
+        method: "POST",
+        body: {
+          baseText: activeVariation.value.description,
+          generationRequest: originalRequest.value,
+          numVariations: numNewVariations.value,
+        },
+      }
+    );
+
+    result.value.variations.push(...newVariations);
+    currentVariationIndex.value =
+      result.value.variations.length - newVariations.length;
+  } catch (err: any) {
+    variationGenerationError.value =
+      err.data?.message || "Не удалось создать вариации.";
+  } finally {
+    isGeneratingVariations.value = false;
   }
 };
 
