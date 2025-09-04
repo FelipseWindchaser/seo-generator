@@ -22,9 +22,20 @@ const generationRequestFromClientSchema = z.object({
   numberOfVariations: z.number().min(1).max(5).optional(),
 });
 
+const analysisDetailSchema = z.object({
+  point: z.string(),
+  isCovered: z.boolean(),
+  evidence: z.string(),
+});
+
 const revalidateRequestSchema = z.object({
   text: z.string(),
   generationRequest: generationRequestFromClientSchema,
+  mode: z.enum(['light', 'full']).default('light'),
+  currentAnalysis: z.object({
+    utpAnalysis: z.array(analysisDetailSchema),
+    painPointAnalysis: z.array(analysisDetailSchema),
+  }).optional(), // Делаем опциональным для обратной совместимости
 });
 
 // --- Переиспользуемый класс для анализа контента ---
@@ -92,23 +103,30 @@ const contentAnalyzer = new ContentAnalyzer();
 export default defineEventHandler(async (event) => {
   try {
     const body = await readBody(event);
-    const { text, generationRequest } = revalidateRequestSchema.parse(body);
+    const { text, generationRequest, mode, currentAnalysis } = revalidateRequestSchema.parse(body);
 
-    const [validationResult, analysisResult] = await Promise.all([
-      validator.validate(
-        text, 
-        generationRequest.requiredKeywords,
-        generationRequest.optionalKeywords
-      ),
-      contentAnalyzer.analyze(text, generationRequest)
-    ]);
+    // Шаг 1: SEO-валидация выполняется всегда.
+    const validationResult = await validator.validate(
+      text, 
+      generationRequest.requiredKeywords,
+      generationRequest.optionalKeywords
+    );
 
-    // ИСПРАВЛЕНО: Собираем финальный объект типа TextVariation, который ожидает фронтенд
-    const updatedVariation: TextVariation = {
-      description: text,
+    let analysisResult: { utpAnalysis: AnalysisDetail[], painPointAnalysis: AnalysisDetail[] };
+
+    // Шаг 2: Анализ контента (LLM) выполняется только в 'full' режиме.
+    if (mode === 'full') {
+      console.log('[API /revalidate] Running in FULL mode. Analyzing content...');
+      analysisResult = await contentAnalyzer.analyze(text, generationRequest);
+    } else {
+      // В 'light' режиме просто возвращаем текущий анализ, который прислал клиент.
+      console.log('[API /revalidate] Running in LIGHT mode. Skipping content analysis.');
+      analysisResult = currentAnalysis || { utpAnalysis: [], painPointAnalysis: [] };
+    }
+
+    const updatedVariation: Pick<TextVariation, 'metrics' | 'analysis'> = {
       metrics: {
-        ...validationResult.metrics, // Берем все метрики из валидатора
-        // И добавляем недостающее поле, посчитав его здесь
+        ...validationResult.metrics,
         boldKeywordsCount: (text.match(/\*\*/g) || []).length / 2,
       },
       analysis: {

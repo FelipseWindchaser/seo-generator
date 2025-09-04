@@ -37,7 +37,7 @@
       </transition>
 
       <!-- Панель вариаций -->
-      <div
+      <!-- <div
         v-if="result.variations && result.variations.length > 1"
         class="bg-white border border-slate-200 rounded-lg p-4"
       >
@@ -57,7 +57,7 @@
             {{ index + 1 }}
           </button>
         </div>
-      </div>
+      </div> -->
 
       <!-- БЛОК 1: МЕТРИКИ ВАЛИДАТОРА -->
       <div
@@ -186,6 +186,30 @@
 
       <!-- БЛОК 3: РЕДАКТОР ТЕКСТА И ОСНОВНЫЕ ДЕЙСТВИЯ -->
       <div class="bg-white border border-slate-200 rounded-lg p-6">
+        <!-- НОВОЕ МЕСТО ДЛЯ ТАБОВ ВАРИАЦИЙ -->
+        <div
+          v-if="result.variations && result.variations.length > 1"
+          class="mb-6"
+        >
+          <div class="border-b border-gray-200">
+            <nav class="-mb-px flex space-x-6" aria-label="Tabs">
+              <button
+                v-for="(variation, index) in result.variations"
+                :key="index"
+                @click="currentVariationIndex = index"
+                :class="[
+                  currentVariationIndex === index
+                    ? 'border-indigo-500 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+                  'whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm focus:outline-none',
+                ]"
+              >
+                Вариация {{ index + 1 }}
+              </button>
+            </nav>
+          </div>
+        </div>
+
         <div class="flex justify-between items-center">
           <h3 class="text-lg font-semibold text-slate-800">
             Ваше SEO-описание
@@ -259,44 +283,68 @@
         </div>
       </div>
 
-      <!-- БЛОК 4: ГЕНЕРАЦИЯ ВАРИАЦИЙ -->
+      <!-- БЛОК 4: ГЕНЕРАЦИЯ ВАРИАЦИЙ (ЗНАЧИТЕЛЬНЫЕ ИЗМЕНЕНИЯ) -->
       <div class="bg-slate-50 border border-slate-200 rounded-lg p-6">
         <h3 class="text-lg font-semibold text-slate-800 mb-2">
           Сгенерировать вариации
         </h3>
         <p class="text-sm text-slate-600 mb-4">
           Создать несколько стилистически уникальных версий на основе текущего
-          активного текста.
+          активного текста. Всего можно иметь не более 5 вариаций.
         </p>
         <div class="flex items-center gap-4">
           <select
             v-model.number="numNewVariations"
-            class="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+            :disabled="!canGenerateMoreVariations"
+            class="block w-40 rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm disabled:bg-gray-200 disabled:cursor-not-allowed"
           >
-            <option>2</option>
-            <option>3</option>
-            <option>4</option>
+            <option
+              v-for="n in availableSlotsForVariations"
+              :key="n"
+              :value="n"
+            >
+              {{ n }}
+            </option>
           </select>
           <button
             @click="handleGenerateVariations"
-            :disabled="isGeneratingVariations"
-            class="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-slate-400 flex items-center justify-center font-medium whitespace-nowrap"
+            :disabled="!canGenerateMoreVariations || isGeneratingVariations"
+            class="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center font-medium whitespace-nowrap"
           >
             <LoadingSpinner
               v-if="isGeneratingVariations"
               class="mr-2"
               :size="20"
             />
-            {{
-              isGeneratingVariations
-                ? "Создаем..."
-                : `✨ Создать ${numNewVariations} новых варианта`
-            }}
+            <span v-if="canGenerateMoreVariations">
+              {{
+                isGeneratingVariations
+                  ? "Создаем..."
+                  : `✨ Создать ${numNewVariations} ${
+                      numNewVariations > 1 ? "варианта" : "вариант"
+                    }`
+              }}
+            </span>
+            <span v-else> Достигнут лимит (5) </span>
           </button>
         </div>
-        <p v-if="variationGenerationError" class="text-sm text-red-600 mt-2">
-          {{ variationGenerationError }}
-        </p>
+        <!-- Баннеры обратной связи -->
+        <transition name="fade">
+          <div
+            v-if="variationGenerationSuccess"
+            class="mt-4 bg-green-100 border border-green-200 text-green-800 text-sm font-medium rounded-lg p-4 text-center"
+          >
+            {{ variationGenerationSuccess }}
+          </div>
+        </transition>
+        <transition name="fade">
+          <div
+            v-if="variationGenerationError"
+            class="mt-4 bg-red-100 border border-red-200 text-red-800 text-sm font-medium rounded-lg p-4 text-center"
+          >
+            {{ variationGenerationError }}
+          </div>
+        </transition>
       </div>
 
       <!-- БЛОК 5: УЛУЧШЕНИЕ С ПОМОЩЬЮ ИИ (REFINE) -->
@@ -470,7 +518,9 @@ const currentVariationIndex = ref(0);
 
 const isGeneratingVariations = ref(false);
 const variationGenerationError = ref("");
+const variationGenerationSuccess = ref("");
 const numNewVariations = ref(2);
+const MAX_VARIATIONS = 5;
 
 const activeVariation = computed<TextVariation>(() => {
   if (result.value && result.value.variations[currentVariationIndex.value]) {
@@ -481,6 +531,25 @@ const activeVariation = computed<TextVariation>(() => {
     metrics: {} as any,
     analysis: { utpAnalysis: [], painPointAnalysis: [] },
   };
+});
+
+// ИЗМЕНЕНО: Логика для лимита вариаций
+const totalVariations = computed(() => result.value?.variations.length || 0);
+
+const canGenerateMoreVariations = computed(
+  () => totalVariations.value < MAX_VARIATIONS
+);
+
+const availableSlotsForVariations = computed(() => {
+  const slots = MAX_VARIATIONS - totalVariations.value;
+  return slots > 0 ? Array.from({ length: slots }, (_, i) => i + 1) : [];
+});
+
+// Следим, чтобы выбранное число не превышало доступное
+watch(availableSlotsForVariations, (newSlots) => {
+  if (newSlots.length > 0 && !newSlots.includes(numNewVariations.value)) {
+    numNewVariations.value = newSlots[0];
+  }
 });
 
 const editableContent = computed({
@@ -506,27 +575,62 @@ const cancelEdits = () => {
 };
 
 const commitEdits = async () => {
-  await handleSave("editor");
-  isEditing.value = false;
+  if (!editableContent.value || !originalRequest.value || !result.value) return;
+
+  isSaving.value = true; // Используем существующий ref для индикации загрузки
+  editorSaveSuccessMessage.value = "";
+
+  try {
+    // 1. Выполняем ПОЛНУЮ ревалидацию перед сохранением
+    const fullyUpdatedParts = await $fetch<
+      Pick<TextVariation, "metrics" | "analysis">
+    >("/api/revalidate", {
+      method: "POST",
+      body: {
+        text: editableContent.value,
+        generationRequest: originalRequest.value,
+        mode: "full", // Явно указываем полный режим
+      },
+    });
+
+    // 2. Обновляем данные активной вариации
+    result.value.variations[currentVariationIndex.value].metrics =
+      fullyUpdatedParts.metrics;
+    result.value.variations[currentVariationIndex.value].analysis =
+      fullyUpdatedParts.analysis;
+
+    // 3. Сохраняем весь объект result на сервере
+    await handleSave("editor");
+  } catch (err) {
+    console.error("Failed to commit edits:", err);
+    // Здесь можно показать ошибку пользователю
+  } finally {
+    isSaving.value = false;
+    isEditing.value = false;
+  }
 };
 
 const revalidateContent = useDebounceFn(async () => {
   if (!editableContent.value || !originalRequest.value) return;
 
   try {
-    const updatedVariation = await $fetch<TextVariation>("/api/revalidate", {
+    // Отправляем запрос в 'light' режиме, передавая текущий analysis
+    const updatedParts = await $fetch<
+      Pick<TextVariation, "metrics" | "analysis">
+    >("/api/revalidate", {
       method: "POST",
       body: {
         text: editableContent.value,
         generationRequest: originalRequest.value,
+        mode: "light", // Явно указываем легкий режим
+        currentAnalysis: activeVariation.value.analysis, // Отправляем текущий анализ
       },
     });
 
     if (result.value?.variations) {
       result.value.variations[currentVariationIndex.value].metrics =
-        updatedVariation.metrics;
-      result.value.variations[currentVariationIndex.value].analysis =
-        updatedVariation.analysis;
+        updatedParts.metrics;
+      // Анализ не трогаем, так как он не менялся
 
       metricsJustUpdated.value = true;
       setTimeout(() => {
@@ -534,7 +638,7 @@ const revalidateContent = useDebounceFn(async () => {
       }, 1000);
     }
   } catch (err) {
-    console.error("Failed to revalidate content:", err);
+    console.error("Failed to revalidate content (light):", err);
   }
 }, 750);
 
@@ -741,8 +845,16 @@ const handleSave = async (source: "editor" | "refine") => {
 const handleGenerateVariations = async () => {
   if (!result.value || !originalRequest.value) return;
 
-  isGeneratingVariations.value = true;
+  // Сбрасываем сообщения
   variationGenerationError.value = "";
+  variationGenerationSuccess.value = "";
+
+  const confirmed = window.confirm(
+    `Вы уверены, что хотите сгенерировать ${numNewVariations.value} новых варианта? Это может занять до минуты.`
+  );
+  if (!confirmed) return;
+
+  isGeneratingVariations.value = true;
   try {
     const newVariations = await $fetch<TextVariation[]>(
       "/api/variations/generate",
@@ -759,6 +871,8 @@ const handleGenerateVariations = async () => {
     result.value.variations.push(...newVariations);
     currentVariationIndex.value =
       result.value.variations.length - newVariations.length;
+    variationGenerationSuccess.value = `✅ Успешно создано ${newVariations.length} новых варианта!`;
+    setTimeout(() => (variationGenerationSuccess.value = ""), 4000);
   } catch (err: any) {
     variationGenerationError.value =
       err.data?.message || "Не удалось создать вариации.";
@@ -768,10 +882,10 @@ const handleGenerateVariations = async () => {
 };
 
 const formattedContent = computed(() => {
-  if (!editableContent.value) return "";
+  if (!activeVariation.value.description) return "";
   return (
     `<strong>${result.value?.title || ""}</strong><br><br>` +
-    editableContent.value
+    activeVariation.value.description
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\n/g, "<br>")
   );
