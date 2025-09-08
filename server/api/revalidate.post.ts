@@ -12,15 +12,11 @@ import { ContentAnalyzer } from '~/server/utils/content-analyzer';
 
 const generationRequestFromClientSchema = z.object({
   productName: z.string().min(1),
-  productUrl: z.string().url().optional(),
   requiredKeywords: z.array(z.string()).length(10),
   optionalKeywords: z.array(z.string()).max(10),
   reviews: z.string(),
   usp: z.array(z.string()),
-  adsPlanned: z.boolean(),
-  canChangeVisuals: z.boolean(),
   modelProvider: z.nativeEnum(ModelProvider).optional(),
-  numberOfVariations: z.number().min(1).max(5).optional(),
 });
 
 const analysisDetailSchema = z.object({

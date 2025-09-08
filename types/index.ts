@@ -19,15 +19,11 @@ export interface KeywordInstruction {
  */
 export interface GenerationRequest {
   productName: string;
-  productUrl?: string;
   requiredKeywords: string[]; // 10 обязательных ключей
   optionalKeywords: string[]; // до 10 необязательных
   reviews: string;
   usp: string[];
-  adsPlanned: boolean;
-  canChangeVisuals: boolean;
   modelProvider?: ModelProvider;
-  // numberOfVariations?: number;
 }
 
 
@@ -132,27 +128,12 @@ export interface TextVariation {
 
 export interface GenerationResult {
   success: boolean;
-  // content: string;
-  title: string;
-  // descriptions: string[];
   variations: TextVariation[];
-  // metrics?: ValidationMetrics & { 
-  //   keywordDetails: KeywordDetail[];
-  //   boldKeywordsCount: number;
-  //   utpCovered?: number;
-  //   painPointsAddressed?: number;
-  //   trustTriggers?: number;
-  // };
   attempts: number;
-  // warnings?: string[];
   processingLog?: {
     added: string[];
     removed: string[];
   };
-  // analysis?: {
-  //   utpAnalysis: AnalysisDetail[];
-  //   painPointAnalysis: AnalysisDetail[];
-  // };
 }
 
 

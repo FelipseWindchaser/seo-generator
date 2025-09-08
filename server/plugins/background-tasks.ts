@@ -1,5 +1,3 @@
-// /server/plugins/background-tasks.ts
-
 import { repeatFunction } from '~/composables/processGeneration';
 
 export default defineNitroPlugin((nitroApp) => {

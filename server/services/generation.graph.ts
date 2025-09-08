@@ -31,7 +31,6 @@ interface AgentState {
   analysisResult: ContentAnalysisResult | null;
   // УДАЛЕНО: textVariations больше не является частью этого графа
   attempts: number;
-  title: string;
 }
 
 // --- 2. ОПРЕДЕЛЕНИЕ УЗЛОВ-СПЕЦИАЛИСТОВ ---
@@ -63,35 +62,32 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
     ВЫЖНО: Абзацы должны быть КОРОТКИМИ (3-5 небольших предложения), легкочитаемыми и связанными между собой логически.
     5. Запрет: без списков, подзаголовков, маркировок — только цельный текст.
     6. **КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ВЫДЕЛЕНИЯ**: Каждое ключевое слово из списков "Обязательные ключи" и "Необязательные ключи" ОБЯЗАТЕЛЬНО выделяй жирным шрифтом с помощью двух звездочек. Пример: Наша **соковыжималка** поможет вам...
-    Верни ответ в формате:
-    ===ЗАГОЛОВОК===
-    [заголовок]
-    ===ОПИСАНИЕ===
-    [текст]
+    
+    Верни ТОЛЬКО сгенерированный текст-описание. Без заголовков, без лишних маркеров.
       `);
-  const chain = prompt.pipe(model).pipe(new StringOutputParser());
-  const stream = await chain.stream({
-      productName: generationRequest.productName,
-      reviews: generationRequest.reviews,
-      usp: generationRequest.usp.join(', '),
-      requiredKeywords: JSON.stringify(generationRequest.requiredKeywords),
-      optionalKeywords: JSON.stringify(generationRequest.optionalKeywords),
-  });
-  let responseText = "";
-  for await (const chunk of stream) {
-    responseText += chunk;
-    if (responseText.length > MAX_CONTENT_LENGTH) {
-      console.log(`[Streaming Node] Max length exceeded. Breaking stream.`);
-      break; 
-    }
-  }
-  const titleMatch = responseText.match(/===ЗАГОЛОВОК===\s*([\s\S]*?)\s*===ОПИСАНИЕ===/);
-  const descriptionMatch = responseText.match(/===ОПИСАНИЕ===\s*([\s\S]*)/);
-  const title = titleMatch ? titleMatch[1].trim() : generationRequest.productName;
-  const content = descriptionMatch ? descriptionMatch[1].trim() : responseText;
-  console.log(`[generateNode] Raw content generated. Length: ${content.length}`);
-  return { generatedContent: content, title: title, attempts: 1 };
-};
+      const chain = prompt.pipe(model).pipe(new StringOutputParser());
+      const stream = await chain.stream({
+          productName: generationRequest.productName,
+          reviews: generationRequest.reviews,
+          usp: generationRequest.usp.join(', '),
+          requiredKeywords: JSON.stringify(generationRequest.requiredKeywords),
+          optionalKeywords: JSON.stringify(generationRequest.optionalKeywords),
+      });
+      
+      let responseText = "";
+      for await (const chunk of stream) {
+        responseText += chunk;
+        if (responseText.length > MAX_CONTENT_LENGTH) {
+          console.log(`[Streaming Node] Max length exceeded. Breaking stream.`);
+          break; 
+        }
+      }
+      const content = responseText.trim();
+      console.log(`[generateNode] Raw content generated. Length: ${content.length}`);
+      
+      // ИЗМЕНЕНИЕ: Возвращаем объект без title
+      return { generatedContent: content, attempts: 1 };
+    };
 
 const truncateNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Truncating text programmatically...`);
@@ -307,7 +303,6 @@ const generativeAgent = new StateGraph<AgentState>({
     validationResult: { value: (x, y) => y ?? x },
     analysisResult: { value: (x, y) => y ?? x },
     attempts: { value: (x, y) => y ?? x, default: () => 0 },
-    title: { value: (x, y) => y ?? x },
   },
 })
   .addNode("generate", generateNode)

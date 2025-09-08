@@ -810,7 +810,6 @@ const handleRefinement = async () => {
     originalContent: editableContent.value,
     userPrompt: refinementPrompt.value,
     generationData: originalRequest.value,
-    originalTitle: result.value?.title,
   };
 
   try {
@@ -899,18 +898,14 @@ const handleGenerateVariations = async () => {
 
 const formattedContent = computed(() => {
   if (!activeVariation.value.description) return "";
-  return (
-    `<strong>${result.value?.title || ""}</strong><br><br>` +
-    activeVariation.value.description
-      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/\n/g, "<br>")
-  );
+  return activeVariation.value.description
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n/g, "<br>");
 });
 
 const plainTextContent = computed(() => {
   if (!editableContent.value) return "";
-  const cleanDescription = editableContent.value.replace(/\*\*/g, "");
-  return `${result.value?.title}\n\n${cleanDescription}`;
+  return editableContent.value.replace(/\*\*/g, "");
 });
 
 const copyToClipboard = async () => {

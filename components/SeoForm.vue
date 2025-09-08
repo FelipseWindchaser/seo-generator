@@ -1,4 +1,4 @@
-<!-- /components/GenerationForm.vue -->
+<!-- /components/SeoForm.vue -->
 <template>
   <form @submit.prevent="onSubmit" class="space-y-6">
     <!-- НОВОЕ ПОЛЕ: Выбор модели -->
@@ -19,45 +19,27 @@
         <option :value="ModelProvider.DEEPSEEK">DeepSeek Chat</option>
         <option :value="ModelProvider.GROQ">Groq</option>
       </select>
-      <p class="mt-1 text-sm text-gray-500">
-        Выберите модель для генерации. DeepSeek может быть креативнее, Gemini -
-        быстрее, Groq - дешевле и тупее &#128557;.
-      </p>
+      <p class="mt-1 text-sm text-gray-500">Выберите модель для генерации.</p>
     </div>
 
-    <!-- НОВОЕ ПОЛЕ: Название товара -->
+    <!-- Поле: Название товара -->
     <div>
       <label for="productName" class="block text-sm font-medium text-gray-700"
         >Название товара *</label
       >
-      <input
-        id="productName"
-        v-model="form.productName"
-        type="text"
-        required
-        placeholder="Например: Шнековая соковыжималка Atvel PowerTwist J7"
-        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-      />
-    </div>
-
-    <!-- URL товара и кнопка генерации ключей -->
-    <div>
-      <label for="productUrl" class="block text-sm font-medium text-gray-700"
-        >URL товара на Wildberries</label
-      >
       <div class="mt-1 flex rounded-md shadow-sm">
         <input
-          id="productUrl"
-          v-model="form.productUrl"
-          type="url"
-          pattern=".*wildberries\.ru/catalog/.*"
-          placeholder="https://www.wildberries.ru/catalog/123456/detail.aspx"
+          id="productName"
+          v-model="form.productName"
+          type="text"
+          required
+          placeholder="Например: Шнековая соковыжималка Atvel PowerTwist J7"
           class="block w-full flex-1 rounded-none rounded-l-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
         />
         <button
           type="button"
           @click="generateKeywords"
-          :disabled="!isUrlValidForScraping || isGeneratingKeywords"
+          :disabled="!form.productName.trim() || isGeneratingKeywords"
           class="relative -ml-px inline-flex items-center space-x-2 rounded-r-md border border-gray-300 bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-200 disabled:cursor-not-allowed"
         >
           <LoadingSpinner v-if="isGeneratingKeywords" class="h-4 w-4" />
@@ -241,7 +223,7 @@
       />
     </div>
 
-    <!-- Чекбоксы -->
+    <!-- Чекбоксы
     <div class="space-y-3">
       <label class="flex items-center">
         <input
@@ -259,7 +241,7 @@
         />
         <span class="ml-2 text-sm text-gray-700">Можно менять визуалы</span>
       </label>
-    </div>
+    </div> -->
 
     <!-- Кнопка отправки -->
     <button
@@ -303,12 +285,8 @@ const emit = defineEmits<{
 // Состояние формы
 const form = reactive({
   productName: "",
-  productUrl: "",
   reviews: "",
-  adsPlanned: false,
-  canChangeVisuals: false,
   modelProvider: ModelProvider.GEMINI,
-  // numberOfVariations: 3, // <-- НОВОЕ ПОЛЕ со значением по умолчанию
 });
 
 // ИЗМЕНЕНО: Инициализируем ref-массивы напрямую из props
@@ -338,10 +316,6 @@ const usp = computed(() =>
 );
 const requiredKeywordsCount = computed(() => requiredKeywords.value.length);
 const optionalKeywordsCount = computed(() => optionalKeywords.value.length);
-
-const isUrlValidForScraping = computed(() => {
-  return form.productUrl && form.productUrl.includes("wildberries.ru/catalog/");
-});
 
 const availableRequiredKeywords = computed(() => {
   if (!generatedKeywords.value) return [];
@@ -381,10 +355,8 @@ const isValid = computed(() => {
 
 // Генерация ключей
 const generateKeywords = async () => {
-  // Добавляем проверку и на productName
-  if (!form.productName.trim() && !isUrlValidForScraping.value) {
-    keywordGenerationError.value =
-      "Пожалуйста, введите название товара или URL.";
+  if (!form.productName.trim()) {
+    keywordGenerationError.value = "Пожалуйста, введите название товара.";
     return;
   }
   isGeneratingKeywords.value = true;
@@ -399,7 +371,7 @@ const generateKeywords = async () => {
       method: "POST",
       body: {
         productName: form.productName,
-        productUrl: form.productUrl,
+        // productUrl удален
         modelProvider: form.modelProvider,
       },
     });
@@ -417,22 +389,15 @@ const populateForm = (data: GenerationRequest | null | undefined) => {
   if (data) {
     console.log("Populating form with initial data:", data);
     form.productName = data.productName || "";
-    form.productUrl = data.productUrl || "";
     form.reviews = data.reviews || "";
-    form.adsPlanned = data.adsPlanned || false;
-    form.canChangeVisuals = data.canChangeVisuals || false;
     form.modelProvider = data.modelProvider || ModelProvider.GEMINI;
     requiredKeywords.value = data.requiredKeywords || [];
     optionalKeywords.value = data.optionalKeywords || [];
     uspText.value = data.usp?.join("\n") || "";
   } else {
-    // Логика для сброса формы, если нужно
     console.log("Resetting form to empty state.");
     form.productName = "";
-    form.productUrl = "";
     form.reviews = "";
-    form.adsPlanned = false;
-    form.canChangeVisuals = false;
     form.modelProvider = ModelProvider.GEMINI;
     requiredKeywords.value = [];
     optionalKeywords.value = [];
@@ -512,12 +477,16 @@ const handleBackspace = (
 // Отправка формы
 const onSubmit = () => {
   if (!isValid.value) return;
-  const data: GenerationRequest = {
+  // Собираем объект GenerationRequest без удаленных полей
+  const data: Omit<
+    GenerationRequest,
+    "productUrl" | "adsPlanned" | "canChangeVisuals"
+  > = {
     ...form,
     requiredKeywords: requiredKeywords.value,
     optionalKeywords: optionalKeywords.value,
     usp: usp.value,
   };
-  emit("submit", data);
+  emit("submit", data as GenerationRequest); // Отправляем, притворяясь полным типом
 };
 </script>

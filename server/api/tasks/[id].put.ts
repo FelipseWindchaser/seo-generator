@@ -65,7 +65,6 @@ const textVariationSchema = z.object({
 // Финальная схема для GenerationResult
 const generationResultSchema = z.object({
   success: z.boolean(),
-  title: z.string(),
   variations: z.array(textVariationSchema),
   attempts: z.number(),
   processingLog: z.object({

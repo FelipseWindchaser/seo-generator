@@ -68,7 +68,6 @@ async function processNextTaskInQueue() {
 
     const errorResult: GenerationResult = {
         success: false,
-        title: "Ошибка генерации",
         attempts: 1,
         variations: [{
             description: errorMessage,
@@ -123,13 +122,14 @@ async function runGenerationWithValidation(
   );
 
   try {
+    // ИЗМЕНЕНИЕ: Убрано поле title из начального состояния
     const finalState = await generativeAgent.invoke(
       {
         generationRequest: data,
         generatedContent: "",
         validationResult: null,
         analysisResult: null,
-        title: "",
+        // title: "", // УДАЛЕНО
         attempts: 0,
       },
       {
@@ -139,8 +139,6 @@ async function runGenerationWithValidation(
       }
     );
 
-    // ИСПРАВЛЕНО: Мы больше не ожидаем `textVariations` от графа.
-    // Вместо этого мы собираем одну-единственную базовую вариацию из финального состояния.
     if (!finalState.generatedContent || !finalState.validationResult || !finalState.analysisResult) {
         throw new Error("Core generation process failed to produce a complete result.");
     }
@@ -157,9 +155,9 @@ async function runGenerationWithValidation(
         }
     };
  
-     return prepareFinalResult(
-      finalState.title,
-      [baseVariation], // Упаковываем одну созданную вариацию в массив
+    // ИЗМЕНЕНИЕ: Убран title из вызова функции
+    return prepareFinalResult(
+      [baseVariation],
       finalState.attempts,
       true
     );
@@ -167,9 +165,10 @@ async function runGenerationWithValidation(
     console.error(`[Generator] LangGraph process failed:`, error);
     const errorMessage = error.message || handleGoogleAIError(error).statusMessage;
     
+    // ИЗМЕНЕНИЕ: Убрано поле title
     const errorResult: GenerationResult = {
       success: false,
-      title: "Ошибка генерации",
+      // title: "Ошибка генерации", // УДАЛЕНО
       attempts: 1,
       variations: [{
           description: errorMessage,
@@ -183,7 +182,6 @@ async function runGenerationWithValidation(
 
 // --- ФУНКЦИЯ ПОДГОТОВКИ РЕЗУЛЬТАТА ---
 export function prepareFinalResult(
-  title: string,
   variations: TextVariation[], 
   attempts: number,
   success: boolean,
@@ -193,9 +191,10 @@ export function prepareFinalResult(
   }
 ): GenerationResult {
   
+  // ИЗМЕНЕНИЕ: Убрано поле title из объекта
   const result: GenerationResult = {
     success,
-    title,
+    // title, // УДАЛЕНО
     variations: variations,
     attempts,
     processingLog,
