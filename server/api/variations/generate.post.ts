@@ -8,6 +8,7 @@ import { ContentValidator } from '~/server/utils/content-validator';
 import { intelligentTruncate } from '~/server/utils/text-trimmer';
 import { ContentAnalyzer } from '~/server/utils/content-analyzer'; // <-- ИМПОРТИРУЕМ НОВЫЙ КЛАСС
 import type { GenerationRequest, TextVariation } from '~/types';
+import { handleLangChainError } from '~/server/utils/langchain-error-handler';
 
 const validator = new ContentValidator();
 const MAX_CONTENT_LENGTH = 2000;
@@ -112,6 +113,8 @@ export default defineEventHandler(async (event) => {
     if (error instanceof z.ZodError) {
       throw createError({ statusCode: 400, statusMessage: 'Invalid request body', data: error.errors });
     }
-    throw createError({ statusCode: 500, statusMessage: 'Failed to generate variations' });
+    // ИЗМЕНЕНИЕ: Используем новый обработчик вместо общего
+    const errorResponse = handleLangChainError(error);
+    throw createError(errorResponse);
   }
 });

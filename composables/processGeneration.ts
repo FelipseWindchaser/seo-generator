@@ -4,13 +4,11 @@ import type {
   Task,
   GenerationRequest,
   GenerationResult,
-  ValidationResult,
-  KeywordDetail,
-  AnalysisDetail,
   TextVariation,
 } from "~/types";
 import { ContentValidator } from "~/server/utils/content-validator";
-// import { handleGoogleAIError } from "~/server/utils/error-handler";
+// ИЗМЕНЕНИЕ: Импортируем новый обработчик
+import { handleLangChainError } from "~/server/utils/langchain-error-handler";
 import { getQueuedTasks, updateTask } from "~/server/utils/redis";
 import { generativeAgent } from "~/server/services/generation.graph";
 import {
@@ -61,10 +59,10 @@ async function processNextTaskInQueue() {
       `[ProcessTask] CRITICAL ERROR during processing task ${taskToProcess.id}:`,
       error
     );
-    const errorMessage =
-      error instanceof Error && error.message.includes("Google")
-        ? handleGoogleAIError(error).statusMessage
-        : error.message || "Неизвестная критическая ошибка.";
+    
+    // ИЗМЕНЕНИЕ: Используем новый обработчик
+    const { statusMessage } = handleLangChainError(error);
+    const errorMessage = statusMessage || "Неизвестная критическая ошибка.";
 
     const errorResult: GenerationResult = {
         success: false,
@@ -107,7 +105,8 @@ export async function runUserRefinement(
       `[Refiner] FAILED: LangChain error during user refinement.`,
       error
     );
-    const { statusCode, statusMessage } = handleGoogleAIError(error);
+    // ИЗМЕНЕНИЕ: Используем новый обработчик
+    const { statusCode, statusMessage } = handleLangChainError(error);
     throw createError({ statusCode, statusMessage });
   }
 }
@@ -122,14 +121,12 @@ async function runGenerationWithValidation(
   );
 
   try {
-    // ИЗМЕНЕНИЕ: Убрано поле title из начального состояния
     const finalState = await generativeAgent.invoke(
       {
         generationRequest: data,
         generatedContent: "",
         validationResult: null,
         analysisResult: null,
-        // title: "", // УДАЛЕНО
         attempts: 0,
       },
       {
@@ -155,7 +152,6 @@ async function runGenerationWithValidation(
         }
     };
  
-    // ИЗМЕНЕНИЕ: Убран title из вызова функции
     return prepareFinalResult(
       [baseVariation],
       finalState.attempts,
@@ -163,12 +159,13 @@ async function runGenerationWithValidation(
     );
    } catch (error: any) {
     console.error(`[Generator] LangGraph process failed:`, error);
-    const errorMessage = error.message || handleGoogleAIError(error).statusMessage;
     
-    // ИЗМЕНЕНИЕ: Убрано поле title
+    // ИЗМЕНЕНИЕ: Используем новый обработчик
+    const { statusMessage } = handleLangChainError(error);
+    const errorMessage = statusMessage || "Произошла ошибка в процессе генерации.";
+    
     const errorResult: GenerationResult = {
       success: false,
-      // title: "Ошибка генерации", // УДАЛЕНО
       attempts: 1,
       variations: [{
           description: errorMessage,
@@ -191,10 +188,8 @@ export function prepareFinalResult(
   }
 ): GenerationResult {
   
-  // ИЗМЕНЕНИЕ: Убрано поле title из объекта
   const result: GenerationResult = {
     success,
-    // title, // УДАЛЕНО
     variations: variations,
     attempts,
     processingLog,

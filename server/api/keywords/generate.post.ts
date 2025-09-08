@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { defineEventHandler, readValidatedBody, createError } from 'h3';
 import { keywordGeneratorChain, ModelProvider } from '~/server/services/langchain.service';
-import { handleGoogleAIError } from "~/server/utils/_error-handler";
+import { handleLangChainError } from "~/server/utils/langchain-error-handler";
 
 // ИЗМЕНЕНИЕ: Упрощаем схему валидации, убираем productUrl
 const requestSchema = z.object({
@@ -46,7 +46,12 @@ export default defineEventHandler(async (event) => {
   } catch (error: any) {
     console.error("[API /keywords/generate] Error:", error);
     
-    const errorResponse = handleGoogleAIError(error);
+    if (error instanceof z.ZodError) {
+        throw createError({ statusCode: 400, statusMessage: 'Invalid request body', data: error.errors });
+    }
+
+    // ИЗМЕНЕНИЕ: Вызываем новый, специализированный обработчик
+    const errorResponse = handleLangChainError(error);
     
     throw createError(errorResponse);
   }

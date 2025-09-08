@@ -1,21 +1,26 @@
+// server/utils/redis.ts
+
 import Redis from "ioredis";
 import type { GenerationRequest, Task } from "~/types";
 
-let redis: Redis | null = null;
+// Получаем URL Redis один раз при инициализации модуля
+const config = useRuntimeConfig();
+const redisUrl = config.redisUrl;
 
-export function getRedis(): Redis {
-  if (!redis) {
-    const config = useRuntimeConfig();
-    redis = new Redis(config.redisUrl);
-  }
-  return redis;
+if (!redisUrl) {
+  throw new Error("REDIS_URL is not defined in runtime config. Please check your .env and nuxt.config.ts");
 }
 
-export async function createTask(request: GenerationRequest, status: string): Promise<string> {
+// Создаем единственный экземпляр клиента
+const redisClient = new Redis(redisUrl);
+
+export function getRedis(): Redis {
+  return redisClient;
+}
+
+export async function createTask(request: GenerationRequest, status: "queued"): Promise<string> {
   const redis = getRedis();
-  const taskId = `task_${Date.now()}_${Math.random()
-    .toString(36)
-    .substr(2, 9)}`;
+  const taskId = `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
   const task: Task = {
     id: taskId,
@@ -24,20 +29,17 @@ export async function createTask(request: GenerationRequest, status: string): Pr
     createdAt: new Date().toISOString(),
   };
 
+  // 10 часов = 60 секунд * 60 минут * 10 часов
+  const TEN_HOURS_IN_SECONDS = 60 * 60 * 10;
+
   await redis.set(
     `task:${taskId}`,
     JSON.stringify(task),
     "EX",
-    36000 // TTL 1 час
+    TEN_HOURS_IN_SECONDS
   );
 
   return taskId;
-}
-
-// Проверка TTL
-async function getTaskTtl(taskId: string) {
-  const redis = getRedis();
-  return await redis.ttl(taskId); // -2 если ключа нет, -1 если нет TTL
 }
 
 export async function getTask(taskId: string): Promise<Task | null> {
@@ -49,42 +51,42 @@ export async function getTask(taskId: string): Promise<Task | null> {
   return JSON.parse(data) as Task;
 }
 
-
-// find all processing tasks
+/**
+ * @description Находит все задачи в статусе 'queued' с использованием неблокирующей команды SCAN.
+ * Это безопасный для production способ получения ключей.
+ * @returns Массив задач в статусе 'queued'.
+ */
 export async function getQueuedTasks(): Promise<Task[]> {
   const redis = getRedis();
-  
-  try {
-    // 1. Get all task keys
-    const keys = await redis.keys('task:*');
-    // console.log('keys', keys);
-    // 2. If no tasks exist, return empty array
-    if (!keys.length) return [];
-    
-    // 3. Get all tasks in parallel
-    const tasks = await Promise.all(
-      keys.map(async (key) => {
-        const data = await redis.get(key);
-        return data ? (JSON.parse(data) as Task) : null;
-      })
-    );
-    
-    // 4. Filter for processing tasks
-    return tasks.filter((task): task is Task => 
-      task !== null && task.status === 'queued'
-    );
-    
-  } catch (error) {
-    console.error('Error getting processing tasks:', error);
-    throw new Error('Failed to retrieve processing tasks');
+  const stream = redis.scanStream({
+    match: 'task:*',
+    count: 100, // Сколько ключей запрашивать за один раз
+  });
+
+  const taskKeys: string[] = [];
+  for await (const keys of stream) {
+    taskKeys.push(...keys);
   }
+
+  if (taskKeys.length === 0) {
+    return [];
+  }
+
+  // Используем mget для получения всех задач одним запросом
+  const tasksData = await redis.mget(taskKeys);
+
+  const tasks: Task[] = [];
+  for (const data of tasksData) {
+    if (data) {
+      const task = JSON.parse(data) as Task;
+      if (task.status === 'queued') {
+        tasks.push(task);
+      }
+    }
+  }
+  
+  return tasks;
 }
-// get task object by id
-const getalltasks = async () => {
-  const result = await getQueuedTasks();
-  // console.log('getalltasks', result);
-}
-getalltasks();
 
 export async function updateTask(
   taskId: string,
@@ -96,17 +98,11 @@ export async function updateTask(
   if (!task) throw new Error("Task not found");
 
   const updatedTask = { ...task, ...updates };
+  
+  const TASK_TTL_IN_SECONDS = 60 * 60 * 10;
 
-   // --- ДОБАВЬТЕ ЭТОТ ЛОГ ---
-   console.log('--- [REDIS UPDATE] SAVING THIS OBJECT: ---');
-   // Мы используем JSON.stringify, чтобы увидеть вложенную структуру
-   console.log(JSON.stringify(updatedTask.result, null, 2));
-   // --- КОНЕЦ ЛОГА ---
-
-  await redis.setex(`task:${taskId}`, 36000, JSON.stringify(updatedTask));
+  // Используем setex для установки значения с TTL
+  await redis.setex(`task:${taskId}`, TASK_TTL_IN_SECONDS, JSON.stringify(updatedTask));
+  
   return updatedTask;
 }
-
-// import { repeatFunction } from '~/composables/processGeneration';
-// repeatFunction();
-

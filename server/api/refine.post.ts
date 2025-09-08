@@ -8,6 +8,7 @@ import { getModel, ModelProvider } from '~/server/services/langchain.service';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import type { GenerationRequest, GenerationResult, TextVariation, AnalysisDetail } from '~/types';
 import { ContentAnalyzer } from '~/server/utils/content-analyzer';
+import { handleLangChainError } from '~/server/utils/langchain-error-handler';
 // --- Zod-схемы для валидации ---
 
 const generationRequestFromClientSchema = z.object({
@@ -92,6 +93,8 @@ export default defineEventHandler(async (event) => {
     if (error instanceof z.ZodError) {
       throw createError({ statusCode: 400, statusMessage: 'Invalid refine request', data: error.errors });
     }
-    throw createError({ statusCode: 500, statusMessage: 'Internal Server Error', data: { message: error.message } });
+    // ИЗМЕНЕНИЕ: Используем новый обработчик вместо общего
+    const errorResponse = handleLangChainError(error);
+    throw createError(errorResponse);
   }
 });

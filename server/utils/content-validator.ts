@@ -7,7 +7,7 @@ import type {
   ReadabilityMetrics,
   KeywordDetail,
 } from "~/types";
-import { morphologyService } from "~/server/utils/morphology-service";
+import { morphologyService, AdvancedKeywordSearchResult } from "~/server/utils/morphology-service";
 
 // Хелпер для поиска примера вынесен сюда для инкапсуляции логики
 function findKeywordExample(content: string, keyword: string): string {
@@ -79,7 +79,7 @@ export class ContentValidator {
     );
 
     // Шаг 2: Ищем в тексте нормализованные ключи
-    const searchResult = await morphologyService.findKeywordsAdvanced(cleanContent, allNormalizedKeywords, 0);
+    const searchResult = await morphologyService.findKeywordsAdvanced(cleanContent, allNormalizedKeywords);
 
     // Шаг 3: Собираем метрики и проверяем правила
     const metrics = await this.calculateMetrics(content, cleanContent, requiredKeywords, optionalKeywords, searchResult);
@@ -155,12 +155,11 @@ export class ContentValidator {
     cleanContent: string,    // "Чистый" контент для расчетов
     originalRequired: string[],
     originalOptional: string[],
-    searchResult: { found_keywords: string[], details: Record<string, { count: number }> }
+    searchResult: AdvancedKeywordSearchResult
   ): Promise<ValidationMetrics> {
     const charCount = Array.from(cleanContent).length;
     const charCountNoSpaces = Array.from(cleanContent.replace(/\s/g, '')).length;
     const wordCount = cleanContent.split(/\s+/).filter(w => w.length > 0).length;
-
     const allOriginalKeywords = [...originalRequired, ...originalOptional];
     const lemmas = await morphologyService.lemmatizeWords(allOriginalKeywords);
     const originalToLemmaMap = new Map<string, string>();
@@ -202,8 +201,8 @@ export class ContentValidator {
       requiredKeywordsTotal: originalRequired.length,
       optionalKeywordsUsed: usedOptionalCount,
       optionalKeywordsTotal: originalOptional.length,
-      keywordsFound: searchResult.found_keywords,
-      keywordsUsed: searchResult.found_keywords.length,
+      keywordsFound: searchResult.found_lemmas, // <-- ИЗМЕНЕНО
+      keywordsUsed: searchResult.found_lemmas.length, // <-- ИЗМЕНЕНО
       totalKeywords: allOriginalKeywords.length,
       keywordDensity: Math.round(keywordDensity * 100) / 100,
       keywordOccurrences: requiredOccurrences,
