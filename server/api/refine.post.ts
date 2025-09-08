@@ -49,11 +49,11 @@ type AnalysisResponseType = z.infer<typeof analysisSchema>;
 const validator = new ContentValidator();
 const contentAnalyzer = new ContentAnalyzer();
 
-export default defineEventHandler(async (event) => {
+export default defineEventHandler(async (event): Promise<TextVariation> => { // ИЗМЕНЕНИЕ: Указываем новый тип возвращаемого значения
   try {
     const body = await readBody(event);
     const validatedBody = refineBodySchema.parse(body);
-    const {originalContent, userPrompt, generationData } = validatedBody;
+    const { originalContent, userPrompt, generationData } = validatedBody;
 
     const refinedContent = await runUserRefinement(originalContent, userPrompt, generationData);
 
@@ -66,12 +66,10 @@ export default defineEventHandler(async (event) => {
       contentAnalyzer.analyze(refinedContent, generationData)
     ]);
 
-    // ИСПРАВЛЕНО: Собираем единственную вариацию типа TextVariation
     const refinedVariation: TextVariation = {
       description: refinedContent,
       metrics: {
-        ...validationResult.metrics, // Берем все метрики из валидатора
-        // И добавляем недостающее поле, посчитав его здесь
+        ...validationResult.metrics,
         boldKeywordsCount: (refinedContent.match(/\*\*/g) || []).length / 2,
       },
       analysis: {
@@ -80,20 +78,16 @@ export default defineEventHandler(async (event) => {
       },
     };
     
-    const finalResult: GenerationResult = prepareFinalResult(
-      [refinedVariation], // Первый аргумент - массив вариаций
-      -1, // attempts, -1 означает, что это не итерация графа
-      true
-    );
-
-    return finalResult;
+    // ИЗМЕНЕНИЕ: Убираем вызов prepareFinalResult.
+    // Теперь API возвращает только один объект TextVariation, а не весь GenerationResult.
+    // Это позволяет фронтенду самому решать, как обновить свое состояние.
+    return refinedVariation;
 
   } catch (error: any) {
     console.error(`[API /refine] Error:`, error);
     if (error instanceof z.ZodError) {
       throw createError({ statusCode: 400, statusMessage: 'Invalid refine request', data: error.errors });
     }
-    // ИЗМЕНЕНИЕ: Используем новый обработчик вместо общего
     const errorResponse = handleLangChainError(error);
     throw createError(errorResponse);
   }

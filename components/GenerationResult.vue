@@ -805,6 +805,7 @@ const handleRefinement = async () => {
   isRefining.value = true;
   refinementError.value = "";
   refineSaveSuccessMessage.value = "";
+
   const payload = {
     productName: originalRequest.value.productName,
     originalContent: editableContent.value,
@@ -813,12 +814,18 @@ const handleRefinement = async () => {
   };
 
   try {
-    const newResult = await $fetch<GenerationResult>("/api/refine", {
+    // ИЗМЕНЕНИЕ: Ожидаем получить не GenerationResult, а одну TextVariation
+    const updatedVariation = await $fetch<TextVariation>("/api/refine", {
       method: "POST",
       body: payload,
     });
-    result.value = newResult;
-    currentVariationIndex.value = 0;
+
+    // ИЗМЕНЕНИЕ: Не заменяем весь result, а "хирургически" обновляем
+    // только ту вариацию, с которой работал пользователь.
+    if (result.value?.variations) {
+      result.value.variations[currentVariationIndex.value] = updatedVariation;
+    }
+
     refinementPrompt.value = "";
   } catch (err: any) {
     refinementError.value = err.data?.message || "Не удалось улучшить текст.";
