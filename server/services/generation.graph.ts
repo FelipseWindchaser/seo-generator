@@ -41,7 +41,7 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
   const { generationRequest } = state;
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { 
     temperature: 0.7,
-    maxOutputTokens: 600 
+    maxOutputTokens: 630 
   });
   const prompt = ChatPromptTemplate.fromTemplate(`
     Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст-описание для товара, размещаемого на маркетплейсе Wildberries, в пределах 1800-2000 символов.
