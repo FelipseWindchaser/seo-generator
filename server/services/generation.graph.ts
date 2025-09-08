@@ -41,10 +41,10 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
   const { generationRequest } = state;
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { 
     temperature: 0.7,
-    maxOutputTokens: 530 
+    maxOutputTokens: 600 
   });
   const prompt = ChatPromptTemplate.fromTemplate(`
-    Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст-описание для товара, размещаемого на маркетплейсе Wildberries.
+    Ты — опытный маркетолог и SEO-копирайтер. Напиши продающий и SEO-оптимизированный текст-описание для товара, размещаемого на маркетплейсе Wildberries, в пределах 1800-2000 символов.
     --- ДАННЫЕ ---
     - Название товара: {productName}
     - УТП (раскрой через выгоды для клиента): {usp}
@@ -62,6 +62,7 @@ const generateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
        - 4-ый абзац: кому подойдёт и как упростит жизнь. В этом абзаце, если все еще остались неиспользованные ключи, добавь их в первое предложение.
     ВЫЖНО: Абзацы должны быть КОРОТКИМИ (3-5 небольших предложения), легкочитаемыми и связанными между собой логически.
     5. Запрет: без списков, подзаголовков, маркировок — только цельный текст.
+    6. **КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ВЫДЕЛЕНИЯ**: Каждое ключевое слово из списков "Обязательные ключи" и "Необязательные ключи" ОБЯЗАТЕЛЬНО выделяй жирным шрифтом с помощью двух звездочек. Пример: Наша **соковыжималка** поможет вам...
     Верни ответ в формате:
     ===ЗАГОЛОВОК===
     [заголовок]
@@ -101,34 +102,80 @@ const truncateNode = async (state: AgentState): Promise<Partial<AgentState>> => 
 };
 
 const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
-  console.log(`[Graph] Extending text...`);
+  console.log(`[Graph] Extending text surgically...`);
   const { generationRequest, generatedContent } = state;
+
+  // --- ШАГ 1: ТОЧНЫЙ РАСЧЕТ ДЕФИЦИТА И ЦЕЛИ ---
+  const cleanCurrentLength = generatedContent.replace(/\*\*/g, "").length;
+  const targetLength = 1900; // Целимся в середину диапазона 1800-2000
+  const deficit = targetLength - cleanCurrentLength;
+
+  // Рассчитываем, сколько предложений нужно добавить.
+  // Если не хватает > 250 символов, просим 2 предложения. Иначе - одно.
+  // Это предотвратит слишком большие "скачки" длины.
+  const sentencesNeeded = deficit > 250 ? 2 : 1;
+  
+  console.log(`[Extend Node] Current clean length: ${cleanCurrentLength}. Deficit: ${deficit}. Sentences needed: ${sentencesNeeded}`);
+
+  // --- ШАГ 2: АНАЛИЗ НЕРАСКРЫТЫХ ТЕЗИСОВ (логика остается) ---
+  const analyzer = new ContentAnalyzer();
+  const analysis = await analyzer.analyze(generatedContent, generationRequest);
+  const uncoveredUtps = analysis.utpAnalysis
+    .filter(item => !item.isCovered)
+    .map(item => item.point);
+  const uncoveredPainPoints = analysis.painPointAnalysis
+    .filter(item => !item.isCovered)
+    .map(item => item.point);
+  
+  let topicsToExtend = [...uncoveredUtps, ...uncoveredPainPoints];
+
+  if (topicsToExtend.length === 0) {
+    console.log('[Extend Node] All topics are covered. Falling back to a creative extension.');
+    topicsToExtend.push("опиши дополнительный сценарий использования товара или его преимущество для конкретной аудитории (например, для большой семьи или для спортсменов)");
+  }
+
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 580 });
+  
+  // ИЗМЕНЕНИЕ: Промпт полностью переработан. Он теперь "хирургический".
   const prompt = ChatPromptTemplate.fromTemplate(`
-    Ты — креативный копирайтер. Твоя задача — органично расширить текст, чтобы его объем попал в диапазон 1800–2000 символов.
-    --- ИСХОДНЫЙ ТЕКСТ ---
+    Ты — редактор-хирург. Твоя задача — очень точно и лаконично дополнить текст, чтобы он попал в заданный объем.
+    --- ИСХОДНЫЙ ТЕКСТ (для контекста) ---
     {text}
-    --- КОНТЕКСТ ---
-    - Текущая длина: {currentLength} символов.
-    - Целевая длина: 1800-2000 символов.
-    - УТП, которые можно раскрыть подробнее: {usp}
-    - Проблемы из отзывов, которые можно обыграть как преимущества: {reviews}
+    --- КОНТЕКСТ ЗАДАЧИ ---
+    - Текущая "чистая" длина текста: {currentLength} символов.
+    - Целевая длина: ~1900 символов.
+    - **Необходимо добавить примерно: {deficit} символов.**
+    --- ТЕЗИСЫ, КОТОРЫЕ ЕЩЕ НЕ РАСКРЫТЫ В ТЕКСТЕ ---
+    {topicsToExtend}
     --- ЗАДАЧА ---
-    1.  Проанализируй исходный текст и данные.
-    2.  Добавь **один** новый, логически связанный абзац (2-4 предложения), раскрывающий одно из УТП или преимуществ.
-    3.  **КРИТИЧЕСКИ ВАЖНО:** В новом абзаце старайся **не использовать** обязательные ключевые слова, чтобы не увеличивать их плотность.
-    Верни ТОЛЬКО полный текст с новым абзацем. Без комментариев.
+    1.  **КРИТИЧЕСКИ ВАЖНО:** Твоя цель — добавить ровно **{sentencesNeeded}** предложение(й). Не больше и не меньше.
+    2.  Выбери ОДИН тезис из списка "ТЕЗИСЫ, КОТОРЫЕ ЕЩЕ НЕ РАСКРЫТЫ" и раскрой его в этих {sentencesNeeded} предложениях.
+    3.  Будь лаконичен. Старайся, чтобы объем твоего дополнения был близок к {deficit} символам.
+    4.  НЕ ПОВТОРЯЙ то, о чем уже сказано в исходном тексте.
+    5.  В новом тексте старайся **не использовать** обязательные ключевые слова. Если используешь необязательные, выделяй их **звездочками**.
+
+    Верни ТОЛЬКО НОВЫЙ ТЕКСТ ({sentencesNeeded} предложение/я). Ничего больше. Без комментариев, без повторения исходного текста.
       `);
+      
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
-  const newParagraph = await chain.invoke({ 
+  
+  const newContentFragment = await chain.invoke({ 
     text: generatedContent,
-    currentLength: generatedContent.length,
-    usp: generationRequest.usp.join(', '),
-    reviews: generationRequest.reviews,
+    currentLength: cleanCurrentLength,
+    deficit: deficit,
+    sentencesNeeded: sentencesNeeded,
+    topicsToExtend: JSON.stringify(topicsToExtend), 
   });
-  const newContent = `${generatedContent}\n\n${newParagraph}`;
+  
+  // Добавляем новый фрагмент в конец существующего текста.
+  // Если в тексте уже есть абзацы, добавляем через два переноса строки.
+  // Если нет, то через один, чтобы не создавать лишний отступ.
+  const separator = generatedContent.includes('\n\n') ? '\n\n' : '\n';
+  const newContent = `${generatedContent}${separator}${newContentFragment.trim()}`;
+  
   return { generatedContent: newContent, attempts: state.attempts + 1 };
 };
+
 
 const fixKeysNode = async (state: AgentState): Promise<Partial<AgentState>> => {
   console.log(`[Graph] Fixing missing keywords...`);
@@ -145,6 +192,7 @@ const fixKeysNode = async (state: AgentState): Promise<Partial<AgentState>> => {
     - Найди наиболее логичные места для вставки в первых двух-трех абзацах. Не вставляй ключи в последний абзац.
     - Слегка перепиши те предложения, куда планируешь вставить ключи, чтобы они выглядели органично.
     - **КРИТИЧЕСКИ ВАЖНО:** Не добавляй новые абзацы и не удаляй важную информацию. Твоя цель — минимальные, точечные изменения.
+    **ПРАВИЛО ВЫДЕЛЕНИЯ**: Каждый вставленный тобой ключ ОБЯЗАТЕЛЬНО выдели жирным шрифтом с помощью двух звездочек. Пример: ...наша новая **соковыжималка**...
     Верни ПОЛНЫЙ И ИСПРАВЛЕННЫЙ ТЕКСТ. Не пиши ничего, кроме самого текста.
       `);
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
@@ -216,16 +264,23 @@ const fixContentNode = async (state: AgentState): Promise<Partial<AgentState>> =
 const routeAfterValidation = (state: AgentState): "truncate" | "extend" | "fix_keys" | "analyze_content" | "__end__" => {
   const seoStatus = state.validationResult?.status;
   console.log(`[Router] SEO Status: ${seoStatus}, Attempts: ${state.attempts}`);
+  
   if (state.attempts >= MAX_ATTEMPTS) {
     console.log('[Router] Max attempts reached on SEO cycle. Moving to content analysis.');
     return "analyze_content";
   }
-  if (seoStatus === "MISSING_KEYS") return "fix_keys";
+
+  // ИЗМЕНЕНИЕ: Меняем порядок проверок в маршрутизаторе, чтобы он соответствовал
+  // новой логике приоритетов из валидатора.
   if (seoStatus === "TOO_LONG") return "truncate";
   if (seoStatus === "TOO_SHORT") return "extend";
+  if (seoStatus === "MISSING_KEYS") return "fix_keys";
+  
   if (seoStatus === "OK" || seoStatus === "NON_CRITICAL_ERRORS") {
     return "analyze_content";
   }
+
+  // Если статус неизвестен, завершаем, чтобы избежать бесконечного цикла.
   return "__end__";
 };
 
