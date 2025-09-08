@@ -201,8 +201,8 @@ export class ContentValidator {
       requiredKeywordsTotal: originalRequired.length,
       optionalKeywordsUsed: usedOptionalCount,
       optionalKeywordsTotal: originalOptional.length,
-      keywordsFound: searchResult.found_lemmas, // <-- ИЗМЕНЕНО
-      keywordsUsed: searchResult.found_lemmas.length, // <-- ИЗМЕНЕНО
+      keywordsFound: searchResult.found_lemmas, 
+      keywordsUsed: searchResult.found_lemmas.length, 
       totalKeywords: allOriginalKeywords.length,
       keywordDensity: Math.round(keywordDensity * 100) / 100,
       keywordOccurrences: requiredOccurrences,
@@ -230,13 +230,13 @@ export class ContentValidator {
   private checkDensity(metrics: ValidationMetrics, issues: string[]): void {
     if (metrics.keywordDensity < this.minDensity)
       issues.push(
-        `⚠️ Низкая плотность обязательных ключей: ${metrics.keywordDensity.toFixed(
+        ` Низкая плотность обязательных ключей: ${metrics.keywordDensity.toFixed(
           2
         )}% (нужно ${this.minDensity}-${this.maxDensity}%)`
       );
     else if (metrics.keywordDensity > this.maxDensity)
       issues.push(
-        `⚠️ Высокая плотность обязательных ключей: ${metrics.keywordDensity.toFixed(
+        ` Высокая плотность обязательных ключей: ${metrics.keywordDensity.toFixed(
           2
         )}% (нужно ${this.minDensity}-${this.maxDensity}%)`
       );
@@ -248,13 +248,13 @@ export class ContentValidator {
   ): void {
     if (readability.avgSentenceLength > 18)
       issues.push(
-        `⚠️ Слишком длинные предложения: ${readability.avgSentenceLength.toFixed(
+        ` Слишком длинные предложения: ${readability.avgSentenceLength.toFixed(
           2
         )} слов (среднее > 18 слов).`
       );
     if (readability.complexWordsRatio > 30)
       issues.push(
-        `⚠️ Много сложных слов: ${readability.complexWordsRatio.toFixed(
+        ` Много сложных слов: ${readability.complexWordsRatio.toFixed(
           2
         )}% (Нужно < 30%).`
       );
