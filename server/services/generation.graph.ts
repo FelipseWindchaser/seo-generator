@@ -103,17 +103,13 @@ const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
 
   // --- ШАГ 1: ТОЧНЫЙ РАСЧЕТ ДЕФИЦИТА И ЦЕЛИ ---
   const cleanCurrentLength = generatedContent.replace(/\*\*/g, "").length;
-  const targetLength = 1900; // Целимся в середину диапазона 1800-2000
+  const targetLength = 1900;
   const deficit = targetLength - cleanCurrentLength;
-
-  // Рассчитываем, сколько предложений нужно добавить.
-  // Если не хватает > 250 символов, просим 2 предложения. Иначе - одно.
-  // Это предотвратит слишком большие "скачки" длины.
   const sentencesNeeded = deficit > 250 ? 2 : 1;
   
   console.log(`[Extend Node] Current clean length: ${cleanCurrentLength}. Deficit: ${deficit}. Sentences needed: ${sentencesNeeded}`);
 
-  // --- ШАГ 2: АНАЛИЗ НЕРАСКРЫТЫХ ТЕЗИСОВ (логика остается) ---
+  // --- ШАГ 2: АНАЛИЗ НЕРАСКРЫТЫХ ТЕЗИСОВ ---
   const analyzer = new ContentAnalyzer();
   const analysis = await analyzer.analyze(generatedContent, generationRequest);
   const uncoveredUtps = analysis.utpAnalysis
@@ -132,7 +128,7 @@ const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
 
   const model = getModel(generationRequest.modelProvider || ModelProvider.GEMINI, { temperature: 0.7, maxOutputTokens: 580 });
   
-  // ИЗМЕНЕНИЕ: Промпт полностью переработан. Он теперь "хирургический".
+  // ИЗМЕНЕНИЕ: Промпт теперь получает списки ключей и имеет более строгое правило выделения.
   const prompt = ChatPromptTemplate.fromTemplate(`
     Ты — редактор-хирург. Твоя задача — очень точно и лаконично дополнить текст, чтобы он попал в заданный объем.
     --- ИСХОДНЫЙ ТЕКСТ (для контекста) ---
@@ -140,32 +136,35 @@ const extendNode = async (state: AgentState): Promise<Partial<AgentState>> => {
     --- КОНТЕКСТ ЗАДАЧИ ---
     - Текущая "чистая" длина текста: {currentLength} символов.
     - Целевая длина: ~1900 символов.
-    - **Необходимо добавить примерно: {deficit} символов.**
+    - Необходимо добавить примерно: {deficit} символов.
     --- ТЕЗИСЫ, КОТОРЫЕ ЕЩЕ НЕ РАСКРЫТЫ В ТЕКСТЕ ---
     {topicsToExtend}
+    --- СПИСОК КЛЮЧЕВЫХ СЛОВ (для справки и выделения) ---
+    - Обязательные: {requiredKeywords}
+    - Необязательные: {optionalKeywords}
     --- ЗАДАЧА ---
     1.  **КРИТИЧЕСКИ ВАЖНО:** Твоя цель — добавить ровно **{sentencesNeeded}** предложение(й). Не больше и не меньше.
     2.  Выбери ОДИН тезис из списка "ТЕЗИСЫ, КОТОРЫЕ ЕЩЕ НЕ РАСКРЫТЫ" и раскрой его в этих {sentencesNeeded} предложениях.
     3.  Будь лаконичен. Старайся, чтобы объем твоего дополнения был близок к {deficit} символам.
     4.  НЕ ПОВТОРЯЙ то, о чем уже сказано в исходном тексте.
-    5.  В новом тексте старайся **не использовать** обязательные ключевые слова. Если используешь необязательные, выделяй их **звездочками**.
+    5.  **ПРАВИЛО ВЫДЕЛЕНИЯ:** Старайся не использовать слова из списка "Обязательные". Однако, если ты используешь ЛЮБОЕ слово или фразу из списков "Обязательные" или "Необязательные", ты ОБЯЗАН выделить его жирным шрифтом. Пример: ...наша **удобная** соковыжималка...
 
     Верни ТОЛЬКО НОВЫЙ ТЕКСТ ({sentencesNeeded} предложение/я). Ничего больше. Без комментариев, без повторения исходного текста.
       `);
       
   const chain = prompt.pipe(model).pipe(new StringOutputParser());
   
+  // ИЗМЕНЕНИЕ: Передаем ключи в промпт
   const newContentFragment = await chain.invoke({ 
     text: generatedContent,
     currentLength: cleanCurrentLength,
     deficit: deficit,
     sentencesNeeded: sentencesNeeded,
     topicsToExtend: JSON.stringify(topicsToExtend), 
+    requiredKeywords: JSON.stringify(generationRequest.requiredKeywords),
+    optionalKeywords: JSON.stringify(generationRequest.optionalKeywords),
   });
   
-  // Добавляем новый фрагмент в конец существующего текста.
-  // Если в тексте уже есть абзацы, добавляем через два переноса строки.
-  // Если нет, то через один, чтобы не создавать лишний отступ.
   const separator = generatedContent.includes('\n\n') ? '\n\n' : '\n';
   const newContent = `${generatedContent}${separator}${newContentFragment.trim()}`;
   
