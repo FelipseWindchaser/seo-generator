@@ -577,7 +577,23 @@ const cancelEdits = () => {
 const commitEdits = async () => {
   if (!editableContent.value || !originalRequest.value || !result.value) return;
 
-  isSaving.value = true; // Используем существующий ref для индикации загрузки
+  // ИЗМЕНЕНО: Добавляем проверку на наличие реальных изменений в тексте.
+  const hasChanges = editableContent.value !== originalContentBeforeEdit.value;
+
+  if (!hasChanges) {
+    console.log(
+      "[CommitEdits] No changes detected. Exiting edit mode without saving."
+    );
+    isEditing.value = false; // Просто выходим из режима редактирования
+    return; // Прерываем выполнение, чтобы избежать лишних API-вызовов
+  }
+
+  // Если код дошел до сюда, значит изменения есть, и мы продолжаем.
+  console.log(
+    "[CommitEdits] Changes detected. Proceeding with full revalidation and save."
+  );
+
+  isSaving.value = true;
   editorSaveSuccessMessage.value = "";
 
   try {
@@ -589,7 +605,7 @@ const commitEdits = async () => {
       body: {
         text: editableContent.value,
         generationRequest: originalRequest.value,
-        mode: "full", // Явно указываем полный режим
+        mode: "full",
       },
     });
 
@@ -606,7 +622,7 @@ const commitEdits = async () => {
     // Здесь можно показать ошибку пользователю
   } finally {
     isSaving.value = false;
-    isEditing.value = false;
+    isEditing.value = false; // Этот флаг сбросится в любом случае
   }
 };
 
