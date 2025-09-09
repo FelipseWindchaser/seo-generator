@@ -249,7 +249,7 @@
           />
           <textarea
             v-else
-            v-model="editableContent"
+            v-model="editorText"
             rows="15"
             class="w-full p-3 border border-slate-300 rounded-md font-mono text-sm focus:ring-blue-500 focus:border-blue-500 transition bg-slate-50"
           ></textarea>
@@ -515,6 +515,8 @@ const metricsJustUpdated = ref(false);
 const showGenerationSuccessBanner = ref(false);
 const originalContentBeforeEdit = ref("");
 const currentVariationIndex = ref(0);
+const editorText = ref("");
+const originalMetricsBeforeEdit = ref<TextVariation["metrics"] | null>(null);
 
 const isGeneratingVariations = ref(false);
 const variationGenerationError = ref("");
@@ -564,90 +566,124 @@ const editableContent = computed({
   },
 });
 
+function highlightKeywordsInText(text: string, keywords: string[]): string {
+  if (!keywords || keywords.length === 0) {
+    return text;
+  }
+
+  const regex = new RegExp(
+    `\\b(${keywords
+      .map((kw) => kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|")})\\b`,
+    "giu" // 'u' (unicode) флаг исправляет обработку границ слова \b для кириллицы
+  );
+
+  return text.replace(regex, "**$1**");
+}
+
 const startEditing = () => {
-  originalContentBeforeEdit.value = editableContent.value;
+  // Сохраняем оригинальный "грязный" текст
+  originalContentBeforeEdit.value = activeVariation.value.description;
+  // Сохраняем глубокую копию оригинальных метрик
+  originalMetricsBeforeEdit.value = JSON.parse(
+    JSON.stringify(activeVariation.value.metrics)
+  );
+  // Помещаем в редактор "чистую" версию текста
+  editorText.value = activeVariation.value.description.replace(/\*\*/g, "");
   isEditing.value = true;
 };
 
 const cancelEdits = () => {
-  editableContent.value = originalContentBeforeEdit.value;
+  // ИЗМЕНЕНИЕ: Восстанавливаем не только текст, но и метрики
+  if (result.value?.variations && originalMetricsBeforeEdit.value) {
+    result.value.variations[currentVariationIndex.value].description =
+      originalContentBeforeEdit.value;
+    result.value.variations[currentVariationIndex.value].metrics =
+      originalMetricsBeforeEdit.value;
+  }
   isEditing.value = false;
 };
 
 const commitEdits = async () => {
-  if (!editableContent.value || !originalRequest.value || !result.value) return;
+  if (!editorText.value || !originalRequest.value || !result.value) return;
 
-  // ИЗМЕНЕНО: Добавляем проверку на наличие реальных изменений в тексте.
-  const hasChanges = editableContent.value !== originalContentBeforeEdit.value;
-
-  if (!hasChanges) {
-    console.log(
-      "[CommitEdits] No changes detected. Exiting edit mode without saving."
-    );
-    isEditing.value = false; // Просто выходим из режима редактирования
-    return; // Прерываем выполнение, чтобы избежать лишних API-вызовов
-  }
-
-  // Если код дошел до сюда, значит изменения есть, и мы продолжаем.
-  console.log(
-    "[CommitEdits] Changes detected. Proceeding with full revalidation and save."
+  // 1. Восстанавливаем разметку в отредактированном тексте
+  const allKeywords = [
+    ...originalRequest.value.requiredKeywords,
+    ...originalRequest.value.optionalKeywords,
+  ];
+  const newMarkedUpText = highlightKeywordsInText(
+    editorText.value,
+    allKeywords
   );
 
+  // 2. Сравниваем новый "грязный" текст с оригинальным "грязным"
+  const hasChanges = newMarkedUpText !== originalContentBeforeEdit.value;
+
+  if (!hasChanges) {
+    console.log("[CommitEdits] No changes detected. Exiting edit mode.");
+    isEditing.value = false;
+    return;
+  }
+
+  console.log("[CommitEdits] Changes detected. Saving and revalidating.");
   isSaving.value = true;
   editorSaveSuccessMessage.value = "";
 
   try {
-    // 1. Выполняем ПОЛНУЮ ревалидацию перед сохранением
+    // 3. Сохраняем "грязный" текст в наше основное состояние
+    result.value.variations[currentVariationIndex.value].description =
+      newMarkedUpText;
+
+    // 4. Отправляем "чистый" текст на полную ревалидацию
     const fullyUpdatedParts = await $fetch<
       Pick<TextVariation, "metrics" | "analysis">
     >("/api/revalidate", {
       method: "POST",
       body: {
-        text: editableContent.value,
+        text: editorText.value, // Отправляем чистый текст
         generationRequest: originalRequest.value,
         mode: "full",
       },
     });
 
-    // 2. Обновляем данные активной вариации
+    // 5. Обновляем метрики и анализ
     result.value.variations[currentVariationIndex.value].metrics =
       fullyUpdatedParts.metrics;
     result.value.variations[currentVariationIndex.value].analysis =
       fullyUpdatedParts.analysis;
 
-    // 3. Сохраняем весь объект result на сервере
+    // 6. Сохраняем весь объект result на сервере
     await handleSave("editor");
   } catch (err) {
     console.error("Failed to commit edits:", err);
-    // Здесь можно показать ошибку пользователю
   } finally {
     isSaving.value = false;
-    isEditing.value = false; // Этот флаг сбросится в любом случае
+    isEditing.value = false;
   }
 };
 
 const revalidateContent = useDebounceFn(async () => {
-  if (!editableContent.value || !originalRequest.value) return;
+  if (!editorText.value || !originalRequest.value) return;
 
   try {
-    // Отправляем запрос в 'light' режиме, передавая текущий analysis
+    // Отправляем на API "чистый" текст из редактора
     const updatedParts = await $fetch<
       Pick<TextVariation, "metrics" | "analysis">
     >("/api/revalidate", {
       method: "POST",
       body: {
-        text: editableContent.value,
+        text: editorText.value, // Отправляем чистый текст
         generationRequest: originalRequest.value,
-        mode: "light", // Явно указываем легкий режим
-        currentAnalysis: activeVariation.value.analysis, // Отправляем текущий анализ
+        mode: "light",
+        currentAnalysis: activeVariation.value.analysis,
       },
     });
 
     if (result.value?.variations) {
+      // Обновляем только метрики, так как анализ в light-режиме не меняется
       result.value.variations[currentVariationIndex.value].metrics =
         updatedParts.metrics;
-      // Анализ не трогаем, так как он не менялся
-
       metricsJustUpdated.value = true;
       setTimeout(() => {
         metricsJustUpdated.value = false;
@@ -658,7 +694,8 @@ const revalidateContent = useDebounceFn(async () => {
   }
 }, 750);
 
-watch(editableContent, () => {
+// ИЗМЕНЕНИЕ: Следим за чистым текстом в редакторе
+watch(editorText, () => {
   if (isEditing.value) {
     revalidateContent();
   }
@@ -910,9 +947,9 @@ const formattedContent = computed(() => {
     .replace(/\n/g, "<br>");
 });
 
+// ИЗМЕНЕНИЕ: plainTextContent теперь всегда возвращает чистый текст
 const plainTextContent = computed(() => {
-  if (!editableContent.value) return "";
-  return editableContent.value.replace(/\*\*/g, "");
+  return activeVariation.value.description.replace(/\*\*/g, "");
 });
 
 const copyToClipboard = async () => {
