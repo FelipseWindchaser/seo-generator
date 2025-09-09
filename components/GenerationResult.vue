@@ -566,35 +566,47 @@ const editableContent = computed({
   },
 });
 
-function highlightKeywordsInText(text: string, keywords: string[]): string {
-  if (!keywords || keywords.length === 0) {
-    return text;
+// --- НОВАЯ АСИНХРОННАЯ ФУНКЦИЯ ДЛЯ ВЫДЕЛЕНИЯ ЧЕРЕЗ API ---
+async function getHighlightedText(
+  cleanText: string,
+  keywords: string[]
+): Promise<string> {
+  if (!cleanText || !keywords || keywords.length === 0) {
+    return cleanText;
   }
-
-  const regex = new RegExp(
-    `\\b(${keywords
-      .map((kw) => kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join("|")})\\b`,
-    "giu" // 'u' (unicode) флаг исправляет обработку границ слова \b для кириллицы
-  );
-
-  return text.replace(regex, "**$1**");
+  try {
+    const response = await $fetch<{ highlighted_text: string }>(
+      "/api/morphology/highlight-keywords",
+      {
+        // Предполагаем, что API доступен по этому пути
+        method: "POST",
+        body: {
+          text: cleanText,
+          keywords: keywords,
+        },
+      }
+    );
+    return response.highlighted_text;
+  } catch (error) {
+    console.error(
+      "Failed to highlight keywords via API, returning plain text.",
+      error
+    );
+    // В случае ошибки API, просто возвращаем чистый текст, чтобы не ломать сохранение
+    return cleanText;
+  }
 }
 
 const startEditing = () => {
-  // Сохраняем оригинальный "грязный" текст
   originalContentBeforeEdit.value = activeVariation.value.description;
-  // Сохраняем глубокую копию оригинальных метрик
   originalMetricsBeforeEdit.value = JSON.parse(
     JSON.stringify(activeVariation.value.metrics)
   );
-  // Помещаем в редактор "чистую" версию текста
   editorText.value = activeVariation.value.description.replace(/\*\*/g, "");
   isEditing.value = true;
 };
 
 const cancelEdits = () => {
-  // ИЗМЕНЕНИЕ: Восстанавливаем не только текст, но и метрики
   if (result.value?.variations && originalMetricsBeforeEdit.value) {
     result.value.variations[currentVariationIndex.value].description =
       originalContentBeforeEdit.value;
@@ -607,53 +619,50 @@ const cancelEdits = () => {
 const commitEdits = async () => {
   if (!editorText.value || !originalRequest.value || !result.value) return;
 
-  // 1. Восстанавливаем разметку в отредактированном тексте
+  // 1. Асинхронно получаем "грязный" текст от нашего нового API
   const allKeywords = [
     ...originalRequest.value.requiredKeywords,
     ...originalRequest.value.optionalKeywords,
   ];
-  const newMarkedUpText = highlightKeywordsInText(
+  const newMarkedUpText = await getHighlightedText(
     editorText.value,
     allKeywords
   );
 
-  // 2. Сравниваем новый "грязный" текст с оригинальным "грязным"
   const hasChanges = newMarkedUpText !== originalContentBeforeEdit.value;
 
   if (!hasChanges) {
-    console.log("[CommitEdits] No changes detected. Exiting edit mode.");
     isEditing.value = false;
     return;
   }
 
-  console.log("[CommitEdits] Changes detected. Saving and revalidating.");
   isSaving.value = true;
   editorSaveSuccessMessage.value = "";
 
   try {
-    // 3. Сохраняем "грязный" текст в наше основное состояние
+    // 2. Сохраняем "грязный" текст в наше основное состояние
     result.value.variations[currentVariationIndex.value].description =
       newMarkedUpText;
 
-    // 4. Отправляем "чистый" текст на полную ревалидацию
+    // 3. Отправляем "чистый" текст на полную ревалидацию
     const fullyUpdatedParts = await $fetch<
       Pick<TextVariation, "metrics" | "analysis">
     >("/api/revalidate", {
       method: "POST",
       body: {
-        text: editorText.value, // Отправляем чистый текст
+        text: editorText.value, // Валидатор всегда работает с чистым текстом
         generationRequest: originalRequest.value,
         mode: "full",
       },
     });
 
-    // 5. Обновляем метрики и анализ
+    // 4. Обновляем метрики и анализ
     result.value.variations[currentVariationIndex.value].metrics =
       fullyUpdatedParts.metrics;
     result.value.variations[currentVariationIndex.value].analysis =
       fullyUpdatedParts.analysis;
 
-    // 6. Сохраняем весь объект result на сервере
+    // 5. Сохраняем весь объект result на сервере
     await handleSave("editor");
   } catch (err) {
     console.error("Failed to commit edits:", err);
